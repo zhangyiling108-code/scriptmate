@@ -6,6 +6,16 @@ ScriptMate 是一个面向短视频工作流的“文案驱动高质量素材匹
 
 它不试图替代剪辑软件，而是先把“找对素材”这件事做好：把一段文案变成结构化的素材方案包，让后续在任意剪辑工具里更容易完成剪辑。
 
+## 产品介绍
+
+![ScriptMate 封面](docs/assets/intro/01-cover-scriptmate-intro.png)
+
+![ScriptMate 对比](docs/assets/intro/02-comparison-scriptmate-intro.png)
+
+![ScriptMate 功能](docs/assets/intro/03-features-scriptmate-intro.png)
+
+![ScriptMate 结尾](docs/assets/intro/04-ending-scriptmate-intro.png)
+
 ## 它能做什么
 
 - 将文案拆成语义段落

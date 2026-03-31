@@ -6,6 +6,16 @@ ScriptMate is a script-driven, high-quality material matching engine for short-v
 
 It does not try to replace a video editor. Instead, it turns a script into a material package with stronger search strategy, better candidate quality, and clearer review outputs.
 
+## Product Intro
+
+![ScriptMate cover](docs/assets/intro/01-cover-scriptmate-intro.png)
+
+![ScriptMate comparison](docs/assets/intro/02-comparison-scriptmate-intro.png)
+
+![ScriptMate features](docs/assets/intro/03-features-scriptmate-intro.png)
+
+![ScriptMate ending](docs/assets/intro/04-ending-scriptmate-intro.png)
+
 ## What ScriptMate Does
 
 - analyzes a script into semantic segments
