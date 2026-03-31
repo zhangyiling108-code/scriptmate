@@ -1,0 +1,26 @@
+{
+  "经济增长": {
+    "queries": ["economic growth", "GDP chart animation", "stock market rising"],
+    "fallback_category": "economy"
+  },
+  "GDP": {
+    "queries": ["gdp chart", "finance infographic", "economic data screen"],
+    "fallback_category": "economy"
+  },
+  "货币": {
+    "queries": ["currency close up", "cash counting", "coins macro"],
+    "fallback_category": "economy"
+  },
+  "植物": {
+    "queries": ["plants close up", "leaves macro", "herbal lab"],
+    "fallback_category": "nature"
+  },
+  "代谢": {
+    "queries": ["human metabolism", "cell animation", "body process illustration"],
+    "fallback_category": "health"
+  },
+  "科技": {
+    "queries": ["server room", "technology abstract", "digital interface"],
+    "fallback_category": "technology"
+  }
+}

@@ -1,0 +1,16 @@
+config.toml
+.env
+.venv/
+runs/
+tmp-runs/
+runs-real/
+runs-debug/
+cache/
+output/
+backups/
+.pytest_cache/
+__pycache__/
+*.pyc
+.egg-info/
+src/*.egg-info/
+.DS_Store

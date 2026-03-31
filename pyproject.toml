@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "copy-material-matcher"
+version = "0.1.0"
+description = "ScriptMate CLI for high-quality script-driven material matching."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "httpx>=0.27,<1.0",
+  "jinja2>=3.1,<4.0",
+  "loguru>=0.7,<1.0",
+  "pillow>=10.0,<12.0",
+  "pydantic>=2.7,<3.0",
+  "pydantic-settings>=2.2,<3.0",
+  "typer>=0.12,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0,<10.0",
+]
+render = [
+  "playwright>=1.43,<2.0",
+]
+
+[project.scripts]
+cmm = "cmm.cli:app"
+scriptmate = "cmm.cli:app"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

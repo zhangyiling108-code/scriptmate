@@ -1,0 +1,105 @@
+[planner_model]
+provider = "openai"
+model = "gpt-4.1-mini"
+api_key = ""
+base_url = "https://api.openai.com/v1"
+timeout_seconds = 30
+max_retries = 1
+
+[judge_model]
+provider = "openai"
+model = "gpt-4o-mini"
+api_key = ""
+base_url = "https://api.openai.com/v1"
+timeout_seconds = 30
+max_retries = 1
+
+[sources]
+enabled = ["pexels", "pixabay"]
+
+[sources.pexels]
+api_key = ""
+base_url = ""
+
+[sources.pixabay]
+api_key = ""
+base_url = ""
+
+[[sources.extra]]
+name = "vjshi"
+enabled = false
+kind = "manual"
+license = "freemium"
+priority = 15
+home_url = "https://www.vjshi.com/"
+search_url_template = "https://www.vjshi.com/search?wd={query}"
+api_key = ""
+api_key_env = "VJSHI_API_KEY"
+base_url = ""
+notes = "Chinese footage marketplace / freemium search source."
+
+[[sources.extra]]
+name = "shipin520"
+enabled = false
+kind = "manual"
+license = "freemium"
+priority = 18
+home_url = "https://shipin520.com/"
+search_url_template = "https://shipin520.com/video/search/{query}.html"
+api_key = ""
+api_key_env = "SHIPIN520_API_KEY"
+base_url = ""
+notes = "Chinese stock video library / freemium search source."
+
+[[sources.extra]]
+name = "pond5"
+enabled = false
+kind = "manual"
+license = "paid"
+priority = 20
+home_url = "https://www.pond5.com/"
+search_url_template = "https://www.pond5.com/search?kw={query}"
+api_key = ""
+api_key_env = "POND5_API_KEY"
+base_url = ""
+notes = "Example paid source. Declared for routing and future integration; not queried by built-in V1 providers yet."
+
+[[sources.extra]]
+name = "adobe_stock"
+enabled = false
+kind = "manual"
+license = "paid"
+priority = 30
+home_url = "https://stock.adobe.com/video"
+search_url_template = "https://stock.adobe.com/search/video?k={query}"
+api_key = ""
+api_key_env = "ADOBE_STOCK_API_KEY"
+base_url = ""
+notes = "Example paid source for enterprise footage workflows."
+
+[matching]
+top_results = 3
+search_pool_size = 8
+min_score = 0.55
+strong_score = 0.70
+video_min_resolution = 1080
+video_orientation = "vertical"
+
+[generation]
+charts = true
+ai_images = false
+chart_style = "dark_professional"
+
+[library]
+root = ""
+metadata = ""
+
+[cards]
+width = 1080
+height = 1920
+theme = "atlas"
+
+[output]
+format = "both"
+download_quality = "hd"
+cache_dir = ""
