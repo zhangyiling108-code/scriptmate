@@ -1,4 +1,4 @@
-# ScriptMate CLI
+﻿# ScriptMate CLI
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -44,7 +44,7 @@ source .venv/bin/activate
 .venv/bin/scriptmate --help
 .venv/bin/scriptmate init --config config.toml
 .venv/bin/scriptmate doctor --config config.toml
-.venv/bin/scriptmate match --file sample.txt -o ./output
+.venv/bin/scriptmate match --file sample.txt -o ./output --aspect 9:16
 ```
 
 For predictable shared setup, prefer `.venv/bin/scriptmate` or activate the virtualenv first.
@@ -64,11 +64,13 @@ For predictable shared setup, prefer `.venv/bin/scriptmate` or activate the virt
 
 Key configuration sections:
 
-- `[planner_model]`: script analysis model, default `gpt-4.1-mini`
-- `[judge_model]`: thumbnail semantic scoring model, default `gpt-4o-mini`
-- `[sources]`: enabled providers such as `pexels` and `pixabay`
+- `[planner_model]`: script analysis model, default `deepseek-v4-flash`
+- `[judge_model]`: candidate semantic scoring model, default `deepseek-v4-flash`
+- `[judge]`: optional judge behavior; `vision = true` sends thumbnails to a vision-capable judge and usually uses more tokens
+- `[sources]`: enabled providers such as `pexels`, `pixabay`, `coverr`, and `nasa`
 - `[[sources.extra]]`: domestic, paid, or future libraries declared for routing and extension
 - `[matching]`: shortlist size, search depth, score thresholds, aspect, and resolution filters
+- Material search requires `--aspect`; supported ratios are `9:16`, `16:9`, `4:3`, `3:4`, and `1:1`
 - `[generation]`: generated fallback behavior, disabled unless explicitly allowed
 
 ## Why It Is Different
@@ -94,7 +96,7 @@ The matching logic emphasizes:
 Included:
 
 - script analysis into `segment_role` and `visual_type`
-- Pexels + Pixabay search
+- Pexels + Pixabay + Coverr + NASA Images search
 - configurable registration of domestic and paid libraries
 - AI semantic scoring
 - output package for downstream editing

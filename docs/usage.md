@@ -1,4 +1,4 @@
-# ScriptMate CLI 使用说明
+﻿# ScriptMate CLI 使用说明
 
 ## 1. 这是什么
 
@@ -26,6 +26,8 @@ ScriptMate CLI 是一个“文案驱动的高质量素材匹配引擎”。
 
 - Pexels
 - Pixabay
+- Coverr
+- NASA Images
 
 同时现在已经支持在 `config.toml` 里声明额外的国内或付费素材库元信息，例如：
 
@@ -101,36 +103,60 @@ cp config.example.toml config.toml
 
 ```toml
 [planner_model]
-provider = "openai"
-model = "gpt-4.1-mini"
-api_key = "你的 API Key"
-base_url = "https://api.openai.com/v1"
+provider = "deepseek"
+model = "deepseek-v4-flash"
+api_key = "你的 DeepSeek API Key"
+base_url = "https://api.deepseek.com"
 
 [judge_model]
-provider = "openai"
-model = "gpt-4o-mini"
-api_key = "你的 API Key"
-base_url = "https://api.openai.com/v1"
+provider = "deepseek"
+model = "deepseek-v4-flash"
+api_key = "你的 DeepSeek API Key"
+base_url = "https://api.deepseek.com"
 
 [sources]
-enabled = ["pexels", "pixabay"]
+enabled = ["pexels", "pixabay", "coverr", "nasa"]
 
 [sources.pexels]
 api_key = "你的 Pexels Key"
 
 [sources.pixabay]
 api_key = "你的 Pixabay Key"
+
+[sources.coverr]
+api_key = "你的 Coverr Key"
+base_url = "https://api.coverr.co"
+
+[sources.nasa]
+base_url = "https://images-api.nasa.gov"
 ```
 
 也可以不把 key 写进 `config.toml`，直接使用环境变量：
 
 ```bash
-export OPENAI_API_KEY="你的 OpenAI Key"
+export DEEPSEEK_API_KEY="你的 DeepSeek Key"
 export PEXELS_API_KEY="你的 Pexels Key"
 export PIXABAY_API_KEY="你的 Pixabay Key"
+export COVERR_API_KEY="你的 Coverr Key"
 ```
 
+DeepSeek 是 OpenAI 兼容接口；这里的 `base_url` 写到 `https://api.deepseek.com` 即可，程序会在内部拼接 `/chat/completions`。
 如果你后续要换成别的兼容 provider，也可以继续用 `planner_model` / `judge_model` 独立配置覆盖。
+
+如果你配置了支持视觉输入的 judge 模型，可以显式开启缩略图评分：
+
+```toml
+[judge]
+vision = true
+```
+
+也可以运行时加：
+
+```bash
+.venv/bin/scriptmate match --file sample.txt -o ./output --aspect 9:16 --judge-vision
+```
+
+注意：开启后会把候选素材缩略图发送给 judge 模型，通常会消耗更多 token。默认保持关闭，由你自行决定是否使用。
 
 ### 3.2 声明额外付费素材库
 
@@ -159,13 +185,15 @@ notes = "Preferred for cinematic b-roll"
 
 - `pexels`
 - `pixabay`
+- `coverr`
+- `nasa`
 
 推荐默认分工：
 
-- `planner_model = gpt-4.1-mini`
+- `planner_model = deepseek-v4-flash`
   - 更适合脚本分段、视觉策略和搜索词规划
-- `judge_model = gpt-4o-mini`
-  - 更适合对候选缩略图做多模态语义评分
+- `judge_model = deepseek-v4-flash`
+  - 用于候选素材语义评分；如需视觉缩略图评分，可改成其他兼容的视觉模型
 
 ---
 
@@ -203,13 +231,13 @@ notes = "Preferred for cinematic b-roll"
 ### 4.2 完整匹配素材
 
 ```bash
-.venv/bin/scriptmate match --file sample.txt -o ./output
+.venv/bin/scriptmate match --file sample.txt -o ./output --aspect 9:16
 ```
 
 或者直接传一句文本：
 
 ```bash
-.venv/bin/scriptmate match "近年来我国GDP持续增长，已经突破120万亿。最后总结一下核心观点。" -o ./output
+.venv/bin/scriptmate match "近年来我国GDP持续增长，已经突破120万亿。最后总结一下核心观点。" -o ./output --aspect 9:16
 ```
 
 常用参数：
@@ -223,7 +251,7 @@ notes = "Preferred for cinematic b-roll"
 - `--file`：输入文案文件
 - `-o, --output`：输出目录
 - `--top`：每段保留多少个候选
-- `--aspect`：画幅比例，会直接影响素材方向筛选
+- `--aspect`：必填，素材画幅比例，会直接影响素材比例筛选
 - `--resolution`：素材最低分辨率要求，支持 `4K`、`1080`（默认）、`720`
 - `--style`：风格名，目前主要影响卡片风格
 - `--library-root`：本地素材库目录
@@ -236,9 +264,11 @@ notes = "Preferred for cinematic b-roll"
 
 当前支持的常用画幅：
 
-- `9:16`：优先竖屏素材
-- `16:9`：优先横屏素材
-- `1:1`：优先接近方形的素材
+- `9:16`：竖屏短视频素材
+- `16:9`：横屏视频素材
+- `4:3`：传统横屏素材
+- `3:4`：传统竖屏素材
+- `1:1`：接近方形的素材
 
 当前支持的分辨率档位：
 
@@ -248,6 +278,7 @@ notes = "Preferred for cinematic b-roll"
 
 补充说明：
 
+- 系统会严格按你指定的画幅比例过滤素材，避免 16:9、9:16、4:3、3:4 混用导致剪辑不可用
 - 系统会优先满足你指定的分辨率档位
 - 如果在该档位下找不到足够合适的真实素材，会自动补到更低一档
 - 但最低不会低于 `720p`
@@ -256,7 +287,7 @@ notes = "Preferred for cinematic b-roll"
 ### 4.3 单独搜索某个词
 
 ```bash
-.venv/bin/scriptmate search "economic growth" --top 5 --source all
+.venv/bin/scriptmate search "economic growth" --top 5 --source all --aspect 16:9
 ```
 
 可选 source：
@@ -264,6 +295,8 @@ notes = "Preferred for cinematic b-roll"
 - `all`
 - `pexels`
 - `pixabay`
+- `coverr`
+- `nasa`
 
 如果你只是想测试某个关键词搜出来的素材质量，这个命令很方便。
 
@@ -341,8 +374,8 @@ output/
   - 优先搜图片素材
 - `data_card`
   - 优先生成图表或数据型卡片
-- `text_card`
-  - 优先生成总结卡、强调卡
+- 不自动生成文字卡
+  - 总结和强调段会改用真实素材候选，字幕或标题留给剪辑软件处理
 - `skip`
   - 跳过，通常是口播开头、主持人镜头位
 
@@ -350,7 +383,7 @@ output/
 
 - 具体场景更容易走 `stock_video`
 - 抽象概念、数字、趋势更容易走 `data_card`
-- 总结和强调更容易走 `text_card`
+- 总结和强调会优先走真实素材候选，不生成文字卡
 
 ---
 
@@ -395,7 +428,7 @@ output/
 可以。你可以通过：
 
 ```bash
-scriptmate match --file sample.txt -o ./output --library-root ./assets --library-meta ./metadata.csv
+scriptmate match --file sample.txt -o ./output --aspect 9:16 --library-root ./assets --library-meta ./metadata.csv
 ```
 
 让系统优先使用你自己的素材。
@@ -413,11 +446,11 @@ scriptmate match --file sample.txt -o ./output --library-root ./assets --library
 
 - 文案解析
 - 多段分镜判断
-- Pexels + Pixabay 搜索
+- Pexels + Pixabay + Coverr + NASA Images 搜索
 - AI 评分
 - URL 去重
 - 数据图表 fallback
-- 文字卡片 fallback
+- 默认禁用文字卡生成
 - 输出方案包
 
 当前版本不做：

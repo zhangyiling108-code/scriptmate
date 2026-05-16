@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
+from cmm.aspect import aspect_fit, aspect_matches
 from cmm.config import MatchingSettings
 from cmm.fetcher.base import BaseStockProvider
 from cmm.models import MaterialCandidate, Segment
@@ -23,7 +24,7 @@ class PexelsProvider(BaseStockProvider):
                 response = await client.get(
                     "https://api.pexels.com/videos/search",
                     headers={"Authorization": self.api_key},
-                    params={"query": query, "per_page": 3},
+                    params={"query": query, "per_page": _provider_page_size(self.matching)},
                 )
                 response.raise_for_status()
                 return response.json()
@@ -58,6 +59,8 @@ class PexelsProvider(BaseStockProvider):
                     quality_signals={
                         "hd": (best.get("height") or 0) >= 1080,
                         "orientation": "vertical" if (best.get("height") or 0) >= (best.get("width") or 0) else "horizontal",
+                        "target_aspect": self.matching.target_aspect,
+                        "aspect_fit": aspect_fit(best.get("width") or 0, best.get("height") or 0, self.matching.target_aspect),
                         "duration_fit": _duration_fit(segment.duration_hint, duration),
                         "resolution_fit": resolution_fit,
                     },
@@ -89,6 +92,8 @@ def _select_video_file(files, matching: MatchingSettings):
             return False
         if not _orientation_accepts(width, height, matching.video_orientation):
             return False
+        if not aspect_matches(width, height, matching.target_aspect):
+            return False
         return True
 
     eligible = [video_file for video_file in files if qualifies(video_file)]
@@ -97,6 +102,7 @@ def _select_video_file(files, matching: MatchingSettings):
         for video_file in files
         if min(video_file.get("width") or 0, video_file.get("height") or 0) >= 720
         and _orientation_accepts(video_file.get("width") or 0, video_file.get("height") or 0, matching.video_orientation)
+        and aspect_matches(video_file.get("width") or 0, video_file.get("height") or 0, matching.target_aspect)
     ]
     pool = eligible or acceptable_floor or files
     return min(
@@ -108,6 +114,10 @@ def _select_video_file(files, matching: MatchingSettings):
             video_file.get("height") or 0,
         ),
     )
+
+
+def _provider_page_size(matching: MatchingSettings) -> int:
+    return min(max(int(matching.search_pool_size or 3), 3), 80)
 
 
 def _orientation_accepts(width: int, height: int, orientation: str) -> bool:

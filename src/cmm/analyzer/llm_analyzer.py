@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
@@ -10,15 +10,16 @@ from pydantic import ValidationError
 from cmm.analyzer.base import BaseAnalyzer
 from cmm.config import ModelSettings
 from cmm.exceptions import AnalyzerError
-from cmm.models import AnalysisResult, Segment
+from cmm.fetcher.query_planner import enrich_segment_plan
+from cmm.models import AnalysisResult, Segment, ShotPlan
 from cmm.utils.http import build_async_client
 from cmm.utils.retry import with_retry
 
 
 ROLE_HINTS = {
-    "summary": ("summary", "text_card", "text_card"),
-    "总结": ("summary", "text_card", "text_card"),
-    "结论": ("summary", "text_card", "text_card"),
+    "summary": ("summary", "stock_video", "b_roll"),
+    "总结": ("summary", "stock_video", "b_roll"),
+    "结论": ("summary", "stock_video", "b_roll"),
     "数据": ("data_point", "data_card", "infographic"),
     "增长": ("data_point", "data_card", "infographic"),
     "GDP": ("data_point", "data_card", "infographic"),
@@ -117,8 +118,8 @@ class LLMAnalyzer(BaseAnalyzer):
                 scene_type = "talking_head"
             if any(hint in line for hint in SUMMARY_HINTS):
                 segment_role = "summary"
-                visual_type = "text_card"
-                scene_type = "text_card"
+                visual_type = "stock_video"
+                scene_type = "b_roll"
 
             english_queries = self._build_query_layers(line)
             segments.append(
@@ -136,7 +137,7 @@ class LLMAnalyzer(BaseAnalyzer):
                     context_tags=[],
                     keywords_cn=[line[:10]],
                     keywords_en=english_queries["l1"][:2],
-                    card_text=line if visual_type in {"data_card", "text_card"} else "",
+                    card_text=line if visual_type == "data_card" else "",
                     visual_brief="heuristic fallback visual plan",
                 )
             )
@@ -145,37 +146,47 @@ class LLMAnalyzer(BaseAnalyzer):
     def _build_prompt(self, text: str, aspect: str) -> str:
         return (
             "Analyze this Chinese script for a material matching engine. "
+            "First translate the full script internally into natural English and do all segmentation, visual planning, and stock-search planning from that English full-text meaning. "
+            "Preserve each segment's original Chinese wording in the `text` field and preserve Chinese title/card wording in `card_text` only when a data/infographic card is needed. "
             "Return one JSON object with keys segments, overall_style, target_aspect. "
             "Each segment must include id, text, segment_role, visual_type, scene_type, "
-            "search_queries, search_query_layers, keywords_cn, keywords_en, card_text, visual_brief, narrative_subject, context_statement, context_tags. "
+            "search_queries, search_query_layers, provider_queries, avoid_terms, shots, keywords_cn, keywords_en, card_text, visual_brief, narrative_subject, context_statement, context_tags. "
             "Allowed segment_role: hook, claim, explanation, example, data_point, summary. "
-            "Allowed visual_type: stock_video, stock_image, data_card, text_card, skip. "
-            "Allowed scene_type: talking_head, b_roll, infographic, text_card. "
+            "Allowed visual_type: stock_video, stock_image, data_card, skip. Do not use text_card. "
+            "Allowed scene_type: talking_head, b_roll, infographic. Do not use text_card. "
             "Use skip only for intro or host-only lines. "
             "Use data_card for numbers, charts, comparisons, or abstract processes that are better visualized than searched. "
             "Use stock_image instead of stock_video when the segment is explanatory but visually abstract, such as health concepts, body processes, metabolism, mechanisms, or plant-to-health relationships. "
             "Prefer stock_video only when there is a clear real-world scene, action, place, or object that can be filmed directly. "
-            "Use text_card for explicit summary or emphasis. "
+            "For explicit summary or emphasis, still choose stock_video or stock_image with a concrete real-world visual metaphor; never plan a text card. "
             "Avoid generic stock footage plans for abstract explanations. "
             "search_query_layers must be an object with keys l1, l2, l3, l4. "
+            "All search_queries and all values in search_query_layers must be English stock-footage queries for Pexels/Pixabay, never Chinese. "
+            "Prefer concrete searchable English phrases like `electric vehicle factory assembly line`, `cars at shipping port`, `container port logistics`, or `global supply chain map` over literal translations. "
+            "provider_queries should include provider-specific English queries for `pexels` and `pixabay`. "
+            "avoid_terms should list English terms that should be filtered out when misleading for the segment, such as temple, wedding, cartoon, toy, vintage ship, sad child, or other off-topic concepts. "
+            "shots should split complex segments into 1-4 visual shots, each with intent, queries, provider_queries, and avoid_terms. "
             "narrative_subject should summarize the full-script subject in a short English phrase. "
             "context_statement should explain this segment in the full-script context, including country/domain when relevant. "
-            "context_tags should capture geography, domain, and narrative-object constraints. "
-            "search_queries and keywords_en must be English and suitable for stock search.\n"
+            "context_tags should be English and capture geography, domain, and narrative-object constraints. "
+            "keywords_en must be English and suitable for stock search.\n"
             "Target aspect: {0}\nScript:\n{1}".format(aspect, text)
         )
 
     def _build_retry_prompt(self, text: str, aspect: str) -> str:
         return (
             "Return one valid JSON object only. No explanations, no markdown. "
+            "Internally translate the full Chinese script to English first and base the material plan on that English meaning. "
+            "Keep segment `text` as the original Chinese text, but every search query and every search_query_layers value must be English only. "
             "All ids must be integers. Do not invent placeholder segments. "
             "Schema keys: segments, overall_style, target_aspect. "
-            "Segment keys: id, text, segment_role, visual_type, scene_type, search_queries, search_query_layers, keywords_cn, keywords_en, card_text, visual_brief, narrative_subject, context_statement, context_tags. "
+            "Segment keys: id, text, segment_role, visual_type, scene_type, search_queries, search_query_layers, provider_queries, avoid_terms, shots, keywords_cn, keywords_en, card_text, visual_brief, narrative_subject, context_statement, context_tags. "
             "The first short greeting segment may use visual_type=skip. "
-            "Summary lines should use visual_type=text_card. "
+            "Summary lines should use visual_type=stock_video or stock_image, never text_card. "
             "Data and comparisons should use visual_type=data_card. "
             "Abstract explanatory concepts like metabolism, health effects, internal mechanisms, or concept relationships should prefer stock_image or data_card over stock_video. "
             "Search strategy must follow full-paragraph context, country, and narrative subject, not isolated keywords. "
+            "Use concrete English stock-library phrases, not direct Chinese translations. "
             "Target aspect: {0}\nScript:\n{1}".format(aspect, text)
         )
 
@@ -227,11 +238,14 @@ class LLMAnalyzer(BaseAnalyzer):
                 duration_hint=self._normalize_duration(raw_segment.get("duration_hint")),
                 narrative_subject=str(raw_segment.get("narrative_subject", "") or ""),
                 context_statement=str(raw_segment.get("context_statement", "") or ""),
-                context_tags=self._ensure_list(raw_segment.get("context_tags")),
-                search_queries=self._ensure_list(raw_segment.get("search_queries")),
+                context_tags=self._english_terms(self._ensure_list(raw_segment.get("context_tags"))),
+                search_queries=self._english_terms(self._ensure_list(raw_segment.get("search_queries"))),
                 search_query_layers=self._normalize_query_layers(query_layers),
+                provider_queries=self._normalize_provider_queries(raw_segment.get("provider_queries")),
+                avoid_terms=self._english_terms(self._ensure_list(raw_segment.get("avoid_terms"))),
+                shots=self._normalize_shots(raw_segment.get("shots")),
                 keywords_cn=self._ensure_list(raw_segment.get("keywords_cn")),
-                keywords_en=self._ensure_list(raw_segment.get("keywords_en")),
+                keywords_en=self._english_terms(self._ensure_list(raw_segment.get("keywords_en"))),
                 card_text=str(raw_segment.get("card_text", "") or ""),
                 visual_brief=str(raw_segment.get("visual_brief", "") or ""),
             )
@@ -271,11 +285,11 @@ class LLMAnalyzer(BaseAnalyzer):
     def _normalize_visual_type(self, value) -> str:
         value_str = str(value or "").lower()
         if value_str in {"stock_video", "stock_image", "data_card", "text_card", "skip"}:
-            return value_str
+            return "stock_image" if value_str == "text_card" else value_str
         if "data" in value_str or "chart" in value_str:
             return "data_card"
         if "text" in value_str or "summary" in value_str:
-            return "text_card"
+            return "stock_image"
         if "skip" in value_str or "talk" in value_str:
             return "skip"
         if "image" in value_str:
@@ -285,14 +299,12 @@ class LLMAnalyzer(BaseAnalyzer):
     def _normalize_scene_type(self, value, visual_type) -> str:
         value_str = str(value or "").lower()
         if value_str in {"talking_head", "b_roll", "infographic", "text_card"}:
-            return value_str
+            return "infographic" if value_str == "text_card" else value_str
         visual_type = self._normalize_visual_type(visual_type)
         if visual_type == "skip":
             return "talking_head"
         if visual_type in {"data_card", "stock_image"}:
             return "infographic"
-        if visual_type == "text_card":
-            return "text_card"
         return "b_roll"
 
     def _ensure_list(self, value) -> List[str]:
@@ -307,10 +319,41 @@ class LLMAnalyzer(BaseAnalyzer):
             return self._build_query_layers("")
         normalized = {}
         for key in ("l1", "l2", "l3", "l4"):
-            normalized[key] = self._ensure_list(value.get(key))
+            normalized[key] = self._english_terms(self._ensure_list(value.get(key)))
         if not any(normalized.values()):
             return self._build_query_layers("")
         return normalized
+
+    def _normalize_provider_queries(self, value) -> Dict[str, List[str]]:
+        if not isinstance(value, dict):
+            return {}
+        normalized = {}
+        for provider, queries in value.items():
+            normalized[str(provider)] = self._english_terms(self._ensure_list(queries))
+        return {key: items for key, items in normalized.items() if items}
+
+    def _normalize_shots(self, value) -> List[ShotPlan]:
+        if not isinstance(value, list):
+            return []
+        shots = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            intent = str(item.get("intent", "") or "").strip()
+            queries = self._english_terms(self._ensure_list(item.get("queries")))
+            provider_queries = self._normalize_provider_queries(item.get("provider_queries"))
+            avoid_terms = self._english_terms(self._ensure_list(item.get("avoid_terms")))
+            if not intent and not queries and not provider_queries:
+                continue
+            shots.append(
+                ShotPlan(
+                    intent=intent or "supporting shot",
+                    queries=queries,
+                    provider_queries=provider_queries,
+                    avoid_terms=avoid_terms,
+                )
+            )
+        return shots
 
     def _build_query_layers(self, text: str) -> Dict[str, List[str]]:
         lowered = text.lower()
@@ -338,9 +381,24 @@ class LLMAnalyzer(BaseAnalyzer):
         if "5g" in lowered or "基站" in text:
             direct.extend(["china 5g tower", "cell tower china"])
             synonyms.extend(["telecommunication tower china", "5g infrastructure china"])
-        if "新能源" in text:
-            direct.extend(["china electric vehicle factory", "new energy factory china"])
-            synonyms.extend(["battery production china", "electric car assembly china"])
+        if "新能源" in text or "电动汽车" in text or "electric vehicle" in lowered or "ev" in lowered:
+            direct.extend(["electric vehicle factory assembly line", "electric car production line"])
+            synonyms.extend(["battery production factory", "electric car assembly line", "ev charging station"])
+        if "出口" in text or "export" in lowered:
+            direct.extend(["car export terminal", "vehicle export port"])
+            synonyms.extend(["container port logistics", "cargo ship loading", "global trade shipping"])
+        if "港口" in text or "装船" in text or "port" in lowered or "ship" in lowered:
+            direct.extend(["cars at shipping port", "cargo ship loading port"])
+            synonyms.extend(["container terminal logistics", "port cranes cargo ship", "vehicle shipping terminal"])
+        if "工厂" in text or "生产" in text or "factory" in lowered or "production" in lowered:
+            direct.extend(["automobile factory production line", "factory assembly line"])
+            synonyms.extend(["industrial robot assembly line", "automotive manufacturing"])
+        if "全球" in text or "市场" in text or "global market" in lowered:
+            direct.extend(["global supply chain map", "international trade network"])
+            synonyms.extend(["world map trade routes", "global logistics network"])
+        if "产业" in text or "能力" in text or "industrial capability" in lowered:
+            direct.extend(["industrial supply chain", "advanced manufacturing technology"])
+            synonyms.extend(["technology manufacturing network", "factory automation"])
         if "航天" in text or "航海" in text:
             direct.extend(["china rocket launch", "china aerospace"])
             synonyms.extend(["satellite launch china", "shipyard technology china"])
@@ -351,6 +409,8 @@ class LLMAnalyzer(BaseAnalyzer):
             direct.extend(["cellular metabolism", "human metabolism"])
             synonyms.extend(["microscope cells", "body metabolism"])
             metaphors.extend(["glowing cells illustration"])
+        if not direct and not synonyms and not metaphors and not mood:
+            direct.append("documentary footage")
         return {
             "l1": self._dedupe(direct)[:2],
             "l2": self._dedupe(synonyms)[:3],
@@ -359,6 +419,8 @@ class LLMAnalyzer(BaseAnalyzer):
         }
 
     def _query_terms(self, text: str) -> List[str]:
+        if self._contains_cjk(text):
+            return []
         sanitized = re.sub(r"[^\w\s]+", " ", text)
         pieces = [piece for piece in sanitized.split() if len(piece) >= 2]
         return [" ".join(pieces[:2])] if pieces else ["documentary footage"]
@@ -377,6 +439,20 @@ class LLMAnalyzer(BaseAnalyzer):
             ordered.append(normalized)
         return ordered
 
+    def _english_terms(self, items: List[str]) -> List[str]:
+        english = []
+        for item in items:
+            normalized = " ".join(str(item).split()).strip()
+            if not normalized or self._contains_cjk(normalized):
+                continue
+            if not re.search(r"[A-Za-z]", normalized):
+                continue
+            english.append(normalized)
+        return self._dedupe(english)
+
+    def _contains_cjk(self, value: str) -> bool:
+        return bool(re.search(r"[\u3400-\u9fff]", value or ""))
+
     def _postprocess_segments(self, segments: List[Segment], original_text: str = "") -> List[Segment]:
         cleaned = [segment for segment in segments if segment.text.strip()]
         if not cleaned:
@@ -393,9 +469,11 @@ class LLMAnalyzer(BaseAnalyzer):
                 segment.card_text = ""
             if any(hint in segment.text for hint in SUMMARY_HINTS):
                 segment.segment_role = "summary"
-                segment.visual_type = "text_card"
-                segment.scene_type = "text_card"
-                segment.card_text = segment.text
+                if segment.visual_type == "text_card":
+                    segment.visual_type = "stock_image"
+                if segment.scene_type == "text_card":
+                    segment.scene_type = "infographic"
+                segment.card_text = ""
             if self._should_force_infographic_card(segment):
                 segment.visual_type = "data_card"
                 segment.scene_type = "infographic"
@@ -412,6 +490,7 @@ class LLMAnalyzer(BaseAnalyzer):
             if not segment.keywords_en:
                 segment.keywords_en = segment.search_query_layers.get("l1", [])
             self._apply_context_to_segment(segment, context)
+            enrich_segment_plan(segment)
         return cleaned
 
     def _apply_context_to_segment(self, segment: Segment, context: Dict[str, object]) -> None:
@@ -423,7 +502,7 @@ class LLMAnalyzer(BaseAnalyzer):
         context_queries: List[str] = []
         if subject:
             context_queries.append(subject)
-        context_queries.extend(context_tags[:4])
+        context_queries.extend(self._english_terms(context_tags[:4]))
         if segment.scene_type == "b_roll" and subject:
             context_queries.append("{0} documentary footage".format(subject))
         if segment.visual_type == "stock_image" and subject:
@@ -432,14 +511,15 @@ class LLMAnalyzer(BaseAnalyzer):
             context_queries.append("{0} explanatory reference".format(subject))
 
         existing = segment.search_query_layers.get("context", [])
-        segment.search_query_layers["context"] = self._merge_terms(existing, context_queries)
+        segment.search_query_layers["context"] = self._english_terms(self._merge_terms(existing, context_queries))
         segment.search_queries = self._merge_terms(
             segment.search_queries,
             segment.search_query_layers.get("l1", [])
             + segment.search_query_layers.get("l2", [])
             + segment.search_query_layers.get("context", []),
         )
-        segment.keywords_en = self._merge_terms(segment.keywords_en, context_tags[:4])
+        segment.search_queries = self._english_terms(segment.search_queries)
+        segment.keywords_en = self._english_terms(self._merge_terms(segment.keywords_en, context_tags[:4]))
 
     def _build_document_context(self, segments: List[Segment], original_text: str = "") -> Dict[str, object]:
         full_text = "{0} {1}".format(original_text, " ".join(segment.text for segment in segments)).strip()

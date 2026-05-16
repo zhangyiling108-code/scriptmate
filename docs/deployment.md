@@ -45,7 +45,7 @@ Using `.venv/bin/scriptmate` avoids conflicts with any older global `scriptmate`
 .venv/bin/scriptmate doctor --config config.toml
 .venv/bin/scriptmate config-show --config config.toml
 .venv/bin/scriptmate analyze --file sample.txt -o ./analysis
-.venv/bin/scriptmate match --file sample.txt -o ./output
+.venv/bin/scriptmate match --file sample.txt -o ./output --aspect 9:16
 ```
 
 ## Environment variables
@@ -56,12 +56,19 @@ Available variables:
 
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
+- `DEEPSEEK_API_KEY`
+- `DEEPSEEK_BASE_URL`
 - `PLANNER_MODEL_API_KEY`
 - `PLANNER_MODEL_BASE_URL`
+- `PLANNER_MODEL_NAME`
 - `JUDGE_MODEL_API_KEY`
 - `JUDGE_MODEL_BASE_URL`
+- `JUDGE_MODEL_NAME`
+- `SCRIPTMATE_JUDGE_VISION`
 - `PEXELS_API_KEY`
 - `PIXABAY_API_KEY`
+- `COVERR_API_KEY`
+- `NASA_IMAGES_BASE_URL`
 - `VJSHI_API_KEY`
 - `SHIPIN520_API_KEY`
 - `POND5_API_KEY`

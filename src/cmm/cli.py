@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
@@ -10,6 +10,7 @@ from typing import Optional
 import typer
 
 from cmm import __version__
+from cmm.aspect import normalize_aspect
 from cmm.cache import FileCache
 from cmm.config import Settings
 from cmm.logging import configure_logging
@@ -52,6 +53,13 @@ def _resolve_api_key(config_value: str, env_names) -> str:
     return ""
 
 
+def _validate_aspect(aspect: str) -> str:
+    try:
+        return normalize_aspect(aspect)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
 def _render_config_template(
     planner_provider: str,
     planner_model: str,
@@ -63,6 +71,7 @@ def _render_config_template(
     judge_base_url: str,
     pexels_api_key: str,
     pixabay_api_key: str,
+    coverr_api_key: str,
 ) -> str:
     return """[planner_model]
 provider = "{planner_provider}"
@@ -81,7 +90,7 @@ timeout_seconds = 30
 max_retries = 1
 
 [sources]
-enabled = ["pexels", "pixabay"]
+enabled = ["pexels", "pixabay", "coverr", "nasa"]
 
 [sources.pexels]
 api_key = "{pexels_api_key}"
@@ -91,12 +100,21 @@ base_url = ""
 api_key = "{pixabay_api_key}"
 base_url = ""
 
+[sources.coverr]
+api_key = "{coverr_api_key}"
+base_url = "https://api.coverr.co"
+
+[sources.nasa]
+api_key = ""
+base_url = "https://images-api.nasa.gov"
+
 [matching]
 top_results = 3
 search_pool_size = 8
 min_score = 0.55
 strong_score = 0.70
 video_min_resolution = 1080
+target_aspect = "9:16"
 video_orientation = "vertical"
 
 [generation]
@@ -117,6 +135,14 @@ theme = "atlas"
 format = "both"
 download_quality = "hd"
 cache_dir = ""
+
+[capcut]
+base_url = "http://127.0.0.1:8765"
+
+[judge]
+# Sending candidate thumbnails to a vision-capable judge can improve visual accuracy,
+# but it usually consumes more tokens. Keep disabled unless you intentionally choose a vision model.
+vision = false
 """.format(
         planner_provider=planner_provider,
         planner_model=planner_model,
@@ -128,14 +154,16 @@ cache_dir = ""
         judge_base_url=judge_base_url,
         pexels_api_key=pexels_api_key,
         pixabay_api_key=pixabay_api_key,
+        coverr_api_key=coverr_api_key,
     )
 
 
 def _build_doctor_payload(settings: Settings, config_file: Optional[Path]) -> dict:
-    planner_key = _resolve_api_key(settings.planner_model.api_key, ["PLANNER_MODEL_API_KEY", "OPENAI_API_KEY"])
-    judge_key = _resolve_api_key(settings.judge_model.api_key, ["JUDGE_MODEL_API_KEY", "OPENAI_API_KEY"])
+    planner_key = _resolve_api_key(settings.planner_model.api_key, ["PLANNER_MODEL_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"])
+    judge_key = _resolve_api_key(settings.judge_model.api_key, ["JUDGE_MODEL_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"])
     pexels_key = _resolve_api_key(settings.sources.pexels.api_key, ["PEXELS_API_KEY"])
     pixabay_key = _resolve_api_key(settings.sources.pixabay.api_key, ["PIXABAY_API_KEY"])
+    coverr_key = _resolve_api_key(settings.sources.coverr.api_key, ["COVERR_API_KEY"])
     root = Path.cwd()
     return {
         "version": __version__,
@@ -158,17 +186,21 @@ def _build_doctor_payload(settings: Settings, config_file: Optional[Path]) -> di
             "model": settings.judge_model.model,
             "base_url": settings.judge_model.base_url,
             "api_key_configured": bool(judge_key),
+            "vision_enabled": settings.judge.vision,
         },
         "sources": {
             "enabled": settings.sources.enabled,
             "pexels_api_key_configured": bool(pexels_key),
             "pixabay_api_key_configured": bool(pixabay_key),
+            "coverr_api_key_configured": bool(coverr_key),
+            "nasa_configured": "nasa" in settings.sources.enabled,
             "extra_sources": [item.name for item in settings.sources.configured_external_sources()],
         },
         "matching": {
             "top_results": settings.matching.top_results,
             "search_pool_size": settings.matching.search_pool_size,
             "video_min_resolution": settings.matching.video_min_resolution,
+            "target_aspect": settings.matching.target_aspect,
             "video_orientation": settings.matching.video_orientation,
         },
         "output": {
@@ -191,16 +223,17 @@ def init_config(
     config_file: Path = typer.Option(Path("config.toml"), "--config", help="Path to write the generated config file."),
     force: bool = typer.Option(False, "--force", help="Overwrite the target config file if it already exists."),
     non_interactive: bool = typer.Option(False, "--non-interactive", help="Write config using defaults and passed flags only."),
-    planner_provider: str = typer.Option("openai", help="Planner model provider."),
-    planner_model: str = typer.Option("gpt-4.1-mini", help="Planner model name."),
-    planner_base_url: str = typer.Option("https://api.openai.com/v1", help="Planner model base URL."),
-    judge_provider: str = typer.Option("openai", help="Judge model provider."),
-    judge_model: str = typer.Option("gpt-4o-mini", help="Judge model name."),
-    judge_base_url: str = typer.Option("https://api.openai.com/v1", help="Judge model base URL."),
+    planner_provider: str = typer.Option("deepseek", help="Planner model provider."),
+    planner_model: str = typer.Option("deepseek-v4-flash", help="Planner model name."),
+    planner_base_url: str = typer.Option("https://api.deepseek.com", help="Planner model base URL."),
+    judge_provider: str = typer.Option("deepseek", help="Judge model provider."),
+    judge_model: str = typer.Option("deepseek-v4-flash", help="Judge model name."),
+    judge_base_url: str = typer.Option("https://api.deepseek.com", help="Judge model base URL."),
     planner_api_key: str = typer.Option("", help="Planner model API key. Leave blank to prefer environment variables."),
     judge_api_key: str = typer.Option("", help="Judge model API key. Leave blank to prefer environment variables."),
     pexels_api_key: str = typer.Option("", help="Pexels API key. Leave blank to prefer environment variables."),
     pixabay_api_key: str = typer.Option("", help="Pixabay API key. Leave blank to prefer environment variables."),
+    coverr_api_key: str = typer.Option("", help="Coverr API key. Leave blank to prefer environment variables."),
 ):
     if config_file.exists() and not force:
         raise typer.BadParameter("Config file already exists. Use --force to overwrite.")
@@ -236,6 +269,12 @@ def init_config(
             hide_input=True,
             show_default=False,
         )
+        coverr_api_key = typer.prompt(
+            "Coverr API key (leave blank to use env)",
+            default=coverr_api_key,
+            hide_input=True,
+            show_default=False,
+        )
 
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(
@@ -250,6 +289,7 @@ def init_config(
             judge_base_url=judge_base_url,
             pexels_api_key=pexels_api_key,
             pixabay_api_key=pixabay_api_key,
+            coverr_api_key=coverr_api_key,
         ),
         encoding="utf-8",
     )
@@ -275,18 +315,21 @@ def config_show(
             "provider": settings.planner_model.provider,
             "model": settings.planner_model.model,
             "base_url": settings.planner_model.base_url,
-            "api_key": _mask(_resolve_api_key(settings.planner_model.api_key, ["PLANNER_MODEL_API_KEY", "OPENAI_API_KEY"])),
+            "api_key": _mask(_resolve_api_key(settings.planner_model.api_key, ["PLANNER_MODEL_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"])),
         },
         "judge_model": {
             "provider": settings.judge_model.provider,
             "model": settings.judge_model.model,
             "base_url": settings.judge_model.base_url,
-            "api_key": _mask(_resolve_api_key(settings.judge_model.api_key, ["JUDGE_MODEL_API_KEY", "OPENAI_API_KEY"])),
+            "api_key": _mask(_resolve_api_key(settings.judge_model.api_key, ["JUDGE_MODEL_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"])),
+            "vision_enabled": settings.judge.vision,
         },
         "sources": {
             "enabled": settings.sources.enabled,
             "pexels_api_key": _mask(_resolve_api_key(settings.sources.pexels.api_key, ["PEXELS_API_KEY"])),
             "pixabay_api_key": _mask(_resolve_api_key(settings.sources.pixabay.api_key, ["PIXABAY_API_KEY"])),
+            "coverr_api_key": _mask(_resolve_api_key(settings.sources.coverr.api_key, ["COVERR_API_KEY"])),
+            "nasa_base_url": settings.sources.nasa.base_url,
             "extra_sources": [item.name for item in settings.sources.configured_external_sources()],
         },
         "matching": model_dump_compat(settings.matching),
@@ -301,7 +344,11 @@ def match(
     file: Optional[Path] = typer.Option(None, "--file", help="Path to a script text file."),
     output_dir: Path = typer.Option(..., "-o", "--output", help="Directory where the material package will be written."),
     top: int = typer.Option(3, "--top", help="Final shortlist size per segment. Minimum effective value is 3."),
-    aspect: str = typer.Option("9:16", "--aspect", help="Target aspect ratio: 9:16, 16:9, or 1:1."),
+    aspect: str = typer.Option(
+        ...,
+        "--aspect",
+        help="Required material aspect ratio: 9:16, 16:9, 4:3, 3:4, or 1:1.",
+    ),
     resolution: str = typer.Option("1080", "--resolution", help="Preferred minimum resolution tier: 4K, 1080, or 720."),
     style: str = typer.Option("clean", "--style", help="Output style hint used by generated cards or charts."),
     library_root: Optional[Path] = typer.Option(None, "--library-root", help="Optional local material library root."),
@@ -311,10 +358,16 @@ def match(
     allow_judge_fallback: bool = typer.Option(False, "--allow-judge-fallback", help="Allow heuristic judge fallback if multimodal scoring fails."),
     allow_search_fallback: bool = typer.Option(False, "--allow-search-fallback", help="Allow extra fallback search when strict real-candidate search is insufficient."),
     allow_generated_fallback: bool = typer.Option(False, "--allow-generated-fallback", help="Allow generated cards or charts as fallback."),
+    judge_vision: bool = typer.Option(
+        False,
+        "--judge-vision",
+        help="Send candidate thumbnails to a vision-capable judge model. This can improve accuracy but consumes more tokens.",
+    ),
     verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logs."),
     config_file: Optional[Path] = typer.Option(None, "--config", help="Config file path. Defaults to ./config.toml if present."),
 ):
     configure_logging(verbose)
+    aspect = _validate_aspect(aspect)
     source_text = _read_text(text, file)
     if not source_text.strip():
         raise typer.BadParameter("Provide script text or --file.")
@@ -323,6 +376,8 @@ def match(
     settings.downgrade.judge_fallback = allow_judge_fallback
     settings.downgrade.search_fallback = allow_search_fallback
     settings.downgrade.generated_fallback = allow_generated_fallback
+    if judge_vision:
+        settings.judge.vision = True
     package_root = Path(__file__).resolve().parents[2]
     result = asyncio.run(
         match_script(
@@ -348,13 +403,14 @@ def match(
 def analyze(
     text: Optional[str] = typer.Argument(None, help="Inline script text. Prefer --file for long scripts."),
     file: Optional[Path] = typer.Option(None, "--file", help="Path to a script text file."),
-    aspect: str = typer.Option("9:16", "--aspect", help="Target aspect ratio: 9:16, 16:9, or 1:1."),
+    aspect: str = typer.Option("9:16", "--aspect", help="Target aspect ratio: 9:16, 16:9, 4:3, 3:4, or 1:1."),
     output_dir: Optional[Path] = typer.Option(None, "-o", "--output", help="Optional directory where analysis.json will be written."),
     allow_planner_fallback: bool = typer.Option(False, "--allow-planner-fallback", help="Allow local heuristic planner fallback if the planner model fails."),
     verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logs."),
     config_file: Optional[Path] = typer.Option(None, "--config", help="Config file path. Defaults to ./config.toml if present."),
 ):
     configure_logging(verbose)
+    aspect = _validate_aspect(aspect)
     source_text = _read_text(text, file)
     if not source_text.strip():
         raise typer.BadParameter("Provide script text or --file.")
@@ -374,14 +430,19 @@ def analyze(
 def search(
     query: str = typer.Argument(..., help="Search query for a single material probe."),
     top: int = typer.Option(5, "--top", help="How many candidates to return."),
-    source: str = typer.Option("all", "--source", help="Material provider: all, pexels, or pixabay."),
-    aspect: str = typer.Option("9:16", "--aspect", help="Target aspect ratio: 9:16, 16:9, or 1:1."),
+    source: str = typer.Option("all", "--source", help="Material provider: all, pexels, pixabay, coverr, or nasa."),
+    aspect: str = typer.Option(
+        ...,
+        "--aspect",
+        help="Required material aspect ratio: 9:16, 16:9, 4:3, 3:4, or 1:1.",
+    ),
     resolution: str = typer.Option("1080", "--resolution", help="Preferred minimum resolution tier: 4K, 1080, or 720."),
     output_dir: Optional[Path] = typer.Option(None, "-o", "--output", help="Optional directory where search.json will be written."),
     verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logs."),
     config_file: Optional[Path] = typer.Option(None, "--config", help="Config file path. Defaults to ./config.toml if present."),
 ):
     configure_logging(verbose)
+    aspect = _validate_aspect(aspect)
     settings = Settings.from_file(str(config_file) if config_file else None)
     cache_root = settings.output.cache_dir or str((output_dir or Path.cwd()) / "cache")
     cache = FileCache(cache_root)

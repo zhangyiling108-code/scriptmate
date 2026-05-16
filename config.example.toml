@@ -1,21 +1,21 @@
 [planner_model]
-provider = "openai"
-model = "gpt-4.1-mini"
+provider = "deepseek"
+model = "deepseek-v4-flash"
 api_key = ""
-base_url = "https://api.openai.com/v1"
+base_url = "https://api.deepseek.com"
 timeout_seconds = 30
 max_retries = 1
 
 [judge_model]
-provider = "openai"
-model = "gpt-4o-mini"
+provider = "deepseek"
+model = "deepseek-v4-flash"
 api_key = ""
-base_url = "https://api.openai.com/v1"
+base_url = "https://api.deepseek.com"
 timeout_seconds = 30
 max_retries = 1
 
 [sources]
-enabled = ["pexels", "pixabay"]
+enabled = ["pexels", "pixabay", "coverr", "nasa"]
 
 [sources.pexels]
 api_key = ""
@@ -24,6 +24,14 @@ base_url = ""
 [sources.pixabay]
 api_key = ""
 base_url = ""
+
+[sources.coverr]
+api_key = ""
+base_url = "https://api.coverr.co"
+
+[sources.nasa]
+api_key = ""
+base_url = "https://images-api.nasa.gov"
 
 [[sources.extra]]
 name = "vjshi"
@@ -83,6 +91,7 @@ search_pool_size = 8
 min_score = 0.55
 strong_score = 0.70
 video_min_resolution = 1080
+target_aspect = "9:16"
 video_orientation = "vertical"
 
 [generation]
@@ -103,3 +112,11 @@ theme = "atlas"
 format = "both"
 download_quality = "hd"
 cache_dir = ""
+
+[capcut]
+base_url = "http://127.0.0.1:8765"
+
+[judge]
+# Sending candidate thumbnails to a vision-capable judge can improve visual accuracy,
+# but it usually consumes more tokens. Keep disabled unless you intentionally choose a vision model.
+vision = false

@@ -1,14 +1,24 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Dict, Iterable, List
 
+from cmm.aspect import aspect_matches
 from cmm.cache import FileCache
 from cmm.config import MatchingSettings, SourcesSettings
+from cmm.fetcher.coverr import CoverrProvider
 from cmm.fetcher.fallback import FallbackManager
+from cmm.fetcher.nasa import NasaImagesProvider
 from cmm.fetcher.pexels import PexelsProvider
 from cmm.fetcher.pixabay import PixabayProvider
+from cmm.fetcher.query_planner import (
+    all_shot_queries,
+    candidate_matches_avoid_terms,
+    provider_queries_for,
+    visual_caption_for_candidate,
+)
 from cmm.models import MaterialCandidate, SearchResult, Segment
 
 
@@ -20,6 +30,8 @@ class StockSearchService:
         self.cache = cache
         self.pexels = PexelsProvider(sources.pexels.api_key, matching)
         self.pixabay = PixabayProvider(sources.pixabay.api_key, matching)
+        self.coverr = CoverrProvider(sources.coverr.api_key, matching, sources.coverr.base_url)
+        self.nasa = NasaImagesProvider(matching, sources.nasa.base_url)
 
     async def search(self, segment: Segment) -> List[MaterialCandidate]:
         if segment.visual_type in {"skip", "data_card", "text_card"}:
@@ -27,7 +39,7 @@ class StockSearchService:
         queries = self._segment_queries(segment)
         raw = await self._search_queries(queries, segment)
         deduped = self._dedupe(raw)
-        return self._apply_quality_filters(deduped)
+        return self._apply_candidate_filters(deduped, segment)
 
     async def search_query(self, query: str, source: str = "all", top_k: int = 5) -> SearchResult:
         segment = Segment(id=1, text=query, search_queries=[query], keywords_en=[query])
@@ -42,11 +54,25 @@ class StockSearchService:
 
     async def _search_queries(self, queries: Iterable[str], segment: Segment, source: str = "all") -> List[MaterialCandidate]:
         tasks = []
-        for query in self._normalize_queries(self._expand_queries(list(queries), segment)):
+        base_queries = self._normalize_queries(self._expand_queries(list(queries), segment))
+        provider_query_map = {
+            "pexels": self._normalize_queries(base_queries + provider_queries_for(segment, "pexels")),
+            "pixabay": self._normalize_queries(base_queries + provider_queries_for(segment, "pixabay")),
+            "coverr": self._normalize_queries(base_queries + provider_queries_for(segment, "coverr")),
+            "nasa": self._normalize_queries(base_queries + provider_queries_for(segment, "nasa")),
+        }
+        for query in provider_query_map["pexels"]:
             if source in {"all", "pexels"} and "pexels" in self.sources.enabled:
                 tasks.append(self._cached_provider_search("pexels", query, segment))
+        for query in provider_query_map["pixabay"]:
             if source in {"all", "pixabay"} and "pixabay" in self.sources.enabled:
                 tasks.append(self._cached_provider_search("pixabay", query, segment))
+        for query in provider_query_map["coverr"]:
+            if source in {"all", "coverr"} and "coverr" in self.sources.enabled:
+                tasks.append(self._cached_provider_search("coverr", query, segment))
+        for query in provider_query_map["nasa"]:
+            if source in {"all", "nasa"} and "nasa" in self.sources.enabled:
+                tasks.append(self._cached_provider_search("nasa", query, segment))
         if not tasks:
             return []
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -64,6 +90,7 @@ class StockSearchService:
                 "query": query,
                 "visual_type": segment.visual_type,
                 "scene_type": segment.scene_type,
+                "target_aspect": self.matching.target_aspect,
                 "video_orientation": self.matching.video_orientation,
                 "video_min_resolution": self.matching.video_min_resolution,
                 "search_pool_size": self.matching.search_pool_size,
@@ -76,8 +103,14 @@ class StockSearchService:
             return [MaterialCandidate(**item) for item in cached]
         if provider == "pexels":
             result = await self.pexels.search(segment, query)
-        else:
+        elif provider == "pixabay":
             result = await self.pixabay.search(segment, query)
+        elif provider == "coverr":
+            result = await self.coverr.search(segment, query)
+        elif provider == "nasa":
+            result = await self.nasa.search(segment, query)
+        else:
+            result = []
         self.cache.save_json("search", cache_key, [item.model_dump() for item in result])
         return result
 
@@ -87,6 +120,8 @@ class StockSearchService:
         for query in queries:
             normalized = " ".join(str(query).split()).strip()
             if not normalized:
+                continue
+            if _contains_cjk(normalized) or not re.search(r"[A-Za-z]", normalized):
                 continue
             lowered = normalized.lower()
             if lowered in seen:
@@ -104,9 +139,13 @@ class StockSearchService:
             + layers.get("context", [])
             + layers.get("l3", [])
             + layers.get("l4", [])
+            + all_shot_queries(segment)
         )
         context_variants = self._context_variants(segment)
-        return self._normalize_queries(prioritized + context_variants)
+        queries = self._normalize_queries(prioritized + context_variants)
+        if queries:
+            return queries
+        return self._normalize_queries(self._english_fallback_queries(segment))
 
     def _context_variants(self, segment: Segment) -> List[str]:
         variants: List[str] = []
@@ -118,10 +157,37 @@ class StockSearchService:
             elif segment.visual_type == "stock_image":
                 variants.append("{0} documentary image".format(subject))
         for tag in segment.context_tags[:4]:
-            variants.append(tag)
+            if not _contains_cjk(tag):
+                variants.append(tag)
         if segment.context_statement:
             variants.append(segment.context_statement)
         return variants
+
+    def _english_fallback_queries(self, segment: Segment) -> List[str]:
+        blob = " ".join(
+            [
+                segment.text,
+                segment.visual_brief,
+                segment.narrative_subject,
+                segment.context_statement,
+                " ".join(segment.keywords_cn),
+                " ".join(segment.keywords_en),
+            ]
+        ).lower()
+        queries: List[str] = []
+        if any(hint in blob for hint in ("新能源", "电动汽车", "electric vehicle", " ev ", "nev")):
+            queries.extend(["electric vehicle factory assembly line", "electric car charging station"])
+        if any(hint in blob for hint in ("出口", "export", "全球", "global")):
+            queries.extend(["vehicle export port", "global logistics network"])
+        if any(hint in blob for hint in ("港口", "装船", "port", "ship")):
+            queries.extend(["cars at shipping port", "container port logistics"])
+        if any(hint in blob for hint in ("工厂", "生产", "factory", "production")):
+            queries.extend(["automobile factory production line", "factory assembly line"])
+        if any(hint in blob for hint in ("产业", "能力", "supply chain", "industrial")):
+            queries.extend(["industrial supply chain", "advanced manufacturing technology"])
+        if not queries:
+            queries.append("documentary footage")
+        return queries
 
     def _expand_queries(self, queries: List[str], segment: Segment) -> List[str]:
         expanded = list(queries)
@@ -204,6 +270,37 @@ class StockSearchService:
                 self.matching.video_orientation,
             ):
                 continue
+            if candidate.media_type in {"video", "image"} and not aspect_matches(
+                candidate.width or 0,
+                candidate.height or 0,
+                self.matching.target_aspect,
+            ):
+                continue
+            filtered.append(candidate)
+        return filtered
+
+    def _apply_candidate_filters(self, candidates: List[MaterialCandidate], segment: Segment) -> List[MaterialCandidate]:
+        filtered: List[MaterialCandidate] = []
+        for candidate in self._apply_quality_filters(candidates):
+            evidence = " ".join(
+                [
+                    candidate.source_page,
+                    candidate.reason,
+                    " ".join(candidate.tags),
+                    str(candidate.provider_meta.get("title", "")),
+                    str(candidate.provider_meta.get("query", "")),
+                ]
+            )
+            candidate.provider_meta["visual_caption"] = visual_caption_for_candidate(
+                [
+                    evidence,
+                    candidate.thumbnail_url,
+                    candidate.preview_uri,
+                ]
+            )
+            if candidate_matches_avoid_terms(segment, evidence):
+                candidate.provider_meta["filtered_reason"] = "avoid_terms"
+                continue
             filtered.append(candidate)
         return filtered
 
@@ -224,3 +321,7 @@ def _meets_min_resolution(width: int, height: int, minimum: int) -> bool:
     if width <= 0 or height <= 0:
         return True
     return min(width, height) >= 720
+
+
+def _contains_cjk(value: str) -> bool:
+    return bool(re.search(r"[\u3400-\u9fff]", value or ""))

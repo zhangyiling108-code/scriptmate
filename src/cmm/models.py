@@ -14,6 +14,13 @@ MatchLevel = Literal["exact", "approx", "generic"]
 SourceType = str
 
 
+class ShotPlan(BaseModel):
+    intent: str
+    queries: List[str] = Field(default_factory=list)
+    provider_queries: Dict[str, List[str]] = Field(default_factory=dict)
+    avoid_terms: List[str] = Field(default_factory=list)
+
+
 class Segment(BaseModel):
     id: int
     text: str
@@ -26,6 +33,9 @@ class Segment(BaseModel):
     context_tags: List[str] = Field(default_factory=list)
     search_queries: List[str] = Field(default_factory=list)
     search_query_layers: Dict[str, List[str]] = Field(default_factory=dict)
+    provider_queries: Dict[str, List[str]] = Field(default_factory=dict)
+    avoid_terms: List[str] = Field(default_factory=list)
+    shots: List[ShotPlan] = Field(default_factory=list)
     keywords_cn: List[str] = Field(default_factory=list)
     keywords_en: List[str] = Field(default_factory=list)
     card_text: str = ""

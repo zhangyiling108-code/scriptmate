@@ -58,4 +58,4 @@ class FallbackManager:
         target = Path(path)
         if not target.exists():
             return {}
-        return json.loads(target.read_text(encoding="utf-8"))
+        return json.loads(target.read_text(encoding="utf-8-sig"))

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -6,9 +6,10 @@ from typing import Dict, List, Optional
 import shutil
 from urllib.parse import quote_plus
 
+from cmm.aspect import normalize_aspect, orientation_for_aspect
 from cmm.analyzer import LLMAnalyzer
 from cmm.cache import FileCache
-from cmm.cards import CardRenderer, ChartRenderer
+from cmm.cards import ChartRenderer
 from cmm.config import Settings
 from cmm.fetcher import FallbackManager, StockSearchService
 from cmm.fetcher.downloader import download_file
@@ -90,8 +91,12 @@ async def match_script(
         generic_dir=str(Path(data_dir) / "generic_footage"),
     )
     stock_search = StockSearchService(settings.sources, effective_matching, fallback_manager, cache)
-    scorer = SemanticScorer(settings.judge_model, cache, allow_fallback=settings.downgrade.judge_fallback)
-    card_renderer = CardRenderer(str(Path(data_dir) / "card_templates"), settings.cards)
+    scorer = SemanticScorer(
+        settings.judge_model,
+        cache,
+        allow_fallback=settings.downgrade.judge_fallback,
+        allow_vision=settings.judge.vision,
+    )
     chart_renderer = ChartRenderer(settings.cards, settings.generation)
     ranker = Ranker()
 
@@ -162,7 +167,7 @@ async def match_script(
                 and segment.scene_type == "infographic"
                 and not any(_is_candidate_acceptable(segment, candidate, effective_matching, settings) for candidate in segment_candidates)
             ):
-                segment_candidates.append(await _generated_fallback(segment, chart_renderer, card_renderer, output_dir))
+                segment_candidates.append(await _generated_fallback(segment, chart_renderer, output_dir))
                 segment_fallbacks[segment.id] = True
             elif (
                 segment.scene_type == "infographic"
@@ -181,17 +186,13 @@ async def match_script(
                 segment_candidates.extend(scored_candidates[:requested_results])
                 segment_notes[segment.id].append("该段原本更适合解释卡，但当前默认不降级；已改为返回真实素材候选供人工选择。")
         elif segment.visual_type == "text_card":
-            if settings.downgrade.generated_fallback:
-                segment_candidates.append(await card_renderer.render(segment, str(output_dir / "segments" / _segment_dir(segment.id))))
-                segment_fallbacks[segment.id] = True
-            else:
-                search_segment = segment.model_copy(update={"visual_type": "stock_image", "scene_type": "b_roll"})
-                raw_candidates = await stock_search.search(search_segment)
-                scored_candidates = await scorer.score_candidates(search_segment, raw_candidates)
-                segment_candidates.extend(scored_candidates[:requested_results])
-                segment_notes[segment.id].append("该段原本更适合文字总结卡，但当前默认不降级；已改为返回真实素材候选供人工选择。")
+            search_segment = segment.model_copy(update={"visual_type": "stock_image", "scene_type": "b_roll", "card_text": ""})
+            raw_candidates = await stock_search.search(search_segment)
+            scored_candidates = await scorer.score_candidates(search_segment, raw_candidates)
+            segment_candidates.extend(scored_candidates[:requested_results])
+            segment_notes[segment.id].append("已禁用文字卡生成；该段改为返回真实素材候选供人工选择。")
 
-        materials_by_segment[segment.id] = segment_candidates
+        materials_by_segment[segment.id] = _without_text_cards(segment_candidates)
 
     matched = ranker.match(analysis.segments, materials_by_segment)
     segment_results: List[SegmentMatch] = []
@@ -200,10 +201,11 @@ async def match_script(
         if acceptable_primary is None and item.primary is not None:
             segment_notes[item.segment.id].append("已找到候选，但主选未达到当前质量门槛；保留链接供人工选择，默认不自动降级。")
         chosen = acceptable_primary
+        visible_candidates = _visible_candidates(item.candidates)
         alternatives = (
-            item.candidates[1: requested_results]
-            if chosen is not None and item.candidates
-            else item.candidates[:requested_results]
+            visible_candidates[1: requested_results]
+            if chosen is not None and visible_candidates
+            else visible_candidates[:requested_results]
         )
         if match_input.save_candidates:
             dest_dir = output_dir / "segments" / _segment_dir(item.segment.id)
@@ -326,17 +328,17 @@ async def _supplement_real_candidates(segment, existing, requested_results, stoc
     return supplemental
 
 
-async def _generated_fallback(segment, chart_renderer, card_renderer, output_dir: Path):
+async def _generated_fallback(segment, chart_renderer, output_dir: Path):
     segment_dir = output_dir / "segments" / _segment_dir(segment.id)
-    if segment.visual_type == "stock_image" or segment.scene_type == "infographic":
-        return await chart_renderer.render(segment, str(segment_dir))
-    return await card_renderer.render(segment, str(segment_dir))
+    return await chart_renderer.render(segment, str(segment_dir))
 
 
 def _is_candidate_acceptable(segment, candidate: Optional[MaterialCandidate], matching, settings: Settings) -> bool:
     if candidate is None:
         return False
-    if candidate.source_type in {"data_card", "text_card"}:
+    if candidate.source_type == "text_card":
+        return False
+    if candidate.source_type == "data_card":
         return settings.downgrade.generated_fallback
     threshold = matching.min_score
     if segment.scene_type == "infographic":
@@ -344,20 +346,30 @@ def _is_candidate_acceptable(segment, candidate: Optional[MaterialCandidate], ma
     return candidate.relevance_score >= threshold
 
 
+def _visible_candidates(candidates: List[MaterialCandidate]) -> List[MaterialCandidate]:
+    visible = [
+        candidate
+        for candidate in candidates
+        if candidate.provider_meta.get("candidate_bucket") != "rejected"
+    ]
+    return visible or candidates
+
+
+def _without_text_cards(candidates: List[MaterialCandidate]) -> List[MaterialCandidate]:
+    return [candidate for candidate in candidates if candidate.source_type != "text_card"]
+
+
 def _matching_for_run(matching, aspect: str, resolution: str):
+    normalized_aspect = normalize_aspect(aspect)
     payload = matching.model_dump()
-    payload["video_orientation"] = _orientation_for_aspect(aspect)
+    payload["target_aspect"] = normalized_aspect
+    payload["video_orientation"] = orientation_for_aspect(normalized_aspect)
     payload["video_min_resolution"] = _min_resolution_for_request(resolution, matching.video_min_resolution)
     return type(matching)(**payload)
 
 
 def _orientation_for_aspect(aspect: str) -> str:
-    normalized = (aspect or "").replace("*", ":").strip()
-    if normalized == "16:9":
-        return "horizontal"
-    if normalized == "1:1":
-        return "square"
-    return "vertical"
+    return orientation_for_aspect(aspect)
 
 
 def _min_resolution_for_request(resolution: str, default: int) -> int:
@@ -383,7 +395,7 @@ def _build_summary(segments: List[SegmentMatch]) -> MatchSummary:
             continue
         if item.chosen is None:
             continue
-        if item.chosen.source_type in {"data_card", "text_card"}:
+        if item.chosen.source_type == "data_card":
             summary.generated += 1
         elif item.chosen.match_level == "exact":
             summary.exact += 1
@@ -399,7 +411,7 @@ def _action_for_segment(segment, chosen: Optional[MaterialCandidate]) -> str:
         return "skip"
     if chosen is None:
         return "unmatched"
-    if chosen.source_type in {"data_card", "text_card"}:
+    if chosen.source_type == "data_card":
         return "generated"
     if chosen.provider_meta.get("downloaded_path"):
         return "downloaded"
@@ -412,7 +424,7 @@ def _strategy_note(segment, chosen: Optional[MaterialCandidate]) -> str:
     if segment.visual_type == "skip":
         return "策略：该段保留给口播开场或人工镜头，不自动匹配素材。"
     if segment.visual_type == "text_card":
-        return "策略：该段属于总结/强调，优先生成文字卡以保证信息清晰。"
+        return "策略：该段属于总结/强调，但当前禁止生成文字卡，改用真实素材候选。"
     if segment.visual_type == "data_card":
         if chosen and chosen.source_type == "data_card":
             topic = chosen.provider_meta.get("chart_topic")

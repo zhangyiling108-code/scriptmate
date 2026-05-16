@@ -1,4 +1,4 @@
-from cmm.models import AnalysisResult, MatchResult, MatchSummary, MaterialCandidate, Segment, SegmentMatch
+﻿from cmm.models import AnalysisResult, MatchResult, MatchSummary, MaterialCandidate, Segment, SegmentMatch
 from cmm.outputs.report import build_report
 
 

@@ -1,4 +1,4 @@
-# ScriptMate CLI
+﻿# ScriptMate CLI
 
 [English](README.md) | **简体中文**
 
@@ -44,7 +44,7 @@ source .venv/bin/activate
 .venv/bin/scriptmate --help
 .venv/bin/scriptmate init --config config.toml
 .venv/bin/scriptmate doctor --config config.toml
-.venv/bin/scriptmate match --file sample.txt -o ./output
+.venv/bin/scriptmate match --file sample.txt -o ./output --aspect 9:16
 ```
 
 为了避免系统 PATH 中旧版本命令干扰，推荐优先使用 `.venv/bin/scriptmate`，或者先激活虚拟环境再使用 `scriptmate`。
@@ -64,11 +64,13 @@ source .venv/bin/activate
 
 核心配置分为几类：
 
-- `[planner_model]`：负责文案分段和搜索策略规划，默认 `gpt-4.1-mini`
-- `[judge_model]`：负责候选缩略图语义评分，默认 `gpt-4o-mini`
-- `[sources]`：当前内置自动搜索源，例如 `pexels`、`pixabay`
+- `[planner_model]`：负责文案分段和搜索策略规划，默认 `deepseek-v4-flash`
+- `[judge_model]`：负责候选语义评分，默认 `deepseek-v4-flash`
+- `[judge]`：可选评分行为；`vision = true` 会把缩略图发给支持视觉的 judge 模型，通常会消耗更多 token
+- `[sources]`：当前内置自动搜索源，例如 `pexels`、`pixabay`、`coverr`、`nasa`
 - `[[sources.extra]]`：用于声明国内素材库、付费素材库或未来扩展源
 - `[matching]`：控制候选数量、搜索深度、画幅、分辨率、评分阈值
+- 找素材时必须通过 `--aspect` 指定素材比例，支持 `9:16`、`16:9`、`4:3`、`3:4`、`1:1`
 - `[generation]`：控制生成型 fallback，但默认不自动开启
 
 ## 它的差异化在哪里
@@ -99,7 +101,7 @@ ScriptMate 更适合：
 已包含：
 
 - 文案分段与视觉策略判断
-- Pexels + Pixabay 搜索
+- Pexels + Pixabay + Coverr + NASA Images 搜索
 - 国内/付费素材库的配置声明能力
 - AI 语义评分
 - 面向下游剪辑的素材方案包输出

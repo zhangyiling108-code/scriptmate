@@ -1,4 +1,4 @@
-from cmm.cache import FileCache
+﻿from cmm.cache import FileCache
 from cmm.config import ModelSettings
 from cmm.models import MaterialCandidate, Segment
 from cmm.scorer import SemanticScorer
@@ -205,3 +205,55 @@ def test_score_candidates_uses_heuristic_when_explicitly_allowed(tmp_path, monke
     assert len(scored) == 1
     assert scored[0].relevance_score > 0.0
     assert "Judge unavailable" in scored[0].reason
+
+
+def test_deepseek_scorer_disables_image_input(tmp_path):
+    scorer = SemanticScorer(
+        ModelSettings(provider="deepseek", model="deepseek-v4-flash", api_key="x", base_url="https://api.deepseek.com"),
+        FileCache(str(tmp_path / "cache")),
+    )
+
+    assert scorer._supports_image_input() is False
+
+
+def test_openai_scorer_allows_image_input(tmp_path):
+    scorer = SemanticScorer(
+        ModelSettings(provider="openai", model="gpt-4o-mini", api_key="x", base_url="https://api.openai.com/v1"),
+        FileCache(str(tmp_path / "cache")),
+        allow_vision=True,
+    )
+
+    assert scorer._supports_image_input() is True
+
+
+def test_openai_scorer_disables_image_input_by_default(tmp_path):
+    scorer = SemanticScorer(
+        ModelSettings(provider="openai", model="gpt-4o-mini", api_key="x", base_url="https://api.openai.com/v1"),
+        FileCache(str(tmp_path / "cache")),
+    )
+
+    assert scorer._supports_image_input() is False
+
+
+def test_score_candidates_adds_candidate_bucket(tmp_path, monkeypatch):
+    scorer = SemanticScorer(
+        ModelSettings(provider="deepseek", model="deepseek-v4-flash", api_key="x", base_url="https://example.com/v1"),
+        FileCache(str(tmp_path / "cache")),
+    )
+    segment = Segment(id=1, text="城市经济活力。", visual_type="stock_video", scene_type="b_roll")
+    candidate = MaterialCandidate(
+        id="pexels:1",
+        source_type="pexels",
+        media_type="video",
+        uri="https://example.com/clip.mp4",
+        thumbnail_url="https://example.com/thumb.jpg",
+        provider_meta={"title": "city skyline economy"},
+    )
+
+    async def fake_request_scores(self, segment, candidates):
+        return [{"id": candidates[0].id, "score": 0.66, "reason": "Usable match."}]
+
+    monkeypatch.setattr(SemanticScorer, "_request_scores", fake_request_scores)
+    scored = __import__("asyncio").run(scorer.score_candidates(segment, [candidate]))
+
+    assert scored[0].provider_meta["candidate_bucket"] == "ready"

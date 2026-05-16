@@ -1,4 +1,4 @@
-from cmm.analyzer.llm_analyzer import LLMAnalyzer
+﻿from cmm.analyzer.llm_analyzer import LLMAnalyzer
 from cmm.config import ModelSettings
 from cmm.exceptions import AnalyzerError
 
@@ -67,12 +67,70 @@ def test_analyzer_outputs_roles_and_visual_types(monkeypatch):
     assert result.segments[0].segment_role == "hook"
     assert result.segments[1].visual_type == "data_card"
     assert result.segments[1].scene_type == "infographic"
-    assert result.segments[2].visual_type == "text_card"
+    assert result.segments[2].visual_type == "stock_image"
+    assert result.segments[2].scene_type == "infographic"
+    assert result.segments[2].card_text == ""
     assert "l1" in result.segments[1].search_query_layers
     assert result.segments[1].narrative_subject
     assert result.segments[1].context_statement
     assert result.segments[1].context_tags
     assert "context" in result.segments[1].search_query_layers
+
+
+def test_analyzer_prompt_requires_english_first_stock_queries():
+    analyzer = LLMAnalyzer(
+        ModelSettings(provider="deepseek", model="deepseek-v4-flash", api_key="x", base_url="https://example.com")
+    )
+
+    prompt = analyzer._build_prompt("中国新能源汽车出口增长。", "9:16")
+
+    assert "translate the full script internally into natural English" in prompt
+    assert "never Chinese" in prompt
+    assert "Do not use text_card" in prompt
+    assert "electric vehicle factory assembly line" in prompt
+
+
+def test_analyzer_filters_chinese_search_queries_from_model_payload(monkeypatch):
+    analyzer = LLMAnalyzer(
+        ModelSettings(provider="deepseek", model="deepseek-v4-flash", api_key="x", base_url="https://example.com")
+    )
+
+    async def fake_request_completion(self, prompt: str) -> str:
+        return """
+        {
+          "segments": [
+            {
+              "id": 1,
+              "text": "中国新能源汽车出口增长。",
+              "segment_role": "claim",
+              "visual_type": "stock_video",
+              "scene_type": "b_roll",
+              "search_queries": ["新能源汽车出口", "electric vehicle export port"],
+              "search_query_layers": {"l1": ["中国新能源汽车出口"], "l2": ["car export terminal"], "l3": [], "l4": []},
+              "keywords_cn": ["新能源汽车", "出口"],
+              "keywords_en": ["new energy vehicle", "export"],
+              "card_text": "",
+              "visual_brief": "electric vehicle exports at port",
+              "narrative_subject": "China electric vehicle export growth",
+              "context_statement": "Chinese electric vehicle exports are growing.",
+              "context_tags": ["中国", "china", "electric vehicle", "export"]
+            }
+          ],
+          "overall_style": "clean documentary",
+          "target_aspect": "9:16"
+        }
+        """.strip()
+
+    monkeypatch.setattr(LLMAnalyzer, "_request_completion", fake_request_completion)
+
+    result = __import__("asyncio").run(analyzer.analyze("中国新能源汽车出口增长。", "9:16"))
+    segment = result.segments[0]
+    all_queries = segment.search_queries + sum(segment.search_query_layers.values(), [])
+
+    assert "electric vehicle export port" in segment.search_queries
+    assert "car export terminal" in segment.search_query_layers["l2"]
+    assert all("新能源" not in query and "中国" not in query for query in all_queries)
+    assert "china" in [tag.lower() for tag in segment.context_tags]
 
 
 def test_analyzer_falls_back_to_heuristic_when_remote_fails(monkeypatch):
@@ -93,7 +151,7 @@ def test_analyzer_falls_back_to_heuristic_when_remote_fails(monkeypatch):
     assert len(result.segments) == 3
     assert result.segments[0].visual_type == "skip"
     assert result.segments[1].visual_type in {"stock_video", "data_card"}
-    assert result.segments[2].visual_type == "text_card"
+    assert result.segments[2].visual_type == "stock_video"
 
 
 def test_analyzer_falls_back_to_heuristic_on_generic_network_error(monkeypatch):
@@ -112,7 +170,7 @@ def test_analyzer_falls_back_to_heuristic_on_generic_network_error(monkeypatch):
 
     assert result.overall_style == "heuristic fallback"
     assert result.segments[0].visual_type == "skip"
-    assert result.segments[1].visual_type == "text_card"
+    assert result.segments[1].visual_type == "stock_video"
 
 
 def test_analyzer_raises_when_remote_fails_and_fallback_is_disabled(monkeypatch):

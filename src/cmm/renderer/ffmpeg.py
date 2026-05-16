@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional, Tuple
 
+from cmm.aspect import normalize_aspect
 from cmm.models import AnalysisResult, MatchedSegment, RenderResult, VideoSource
 
 
@@ -225,9 +226,11 @@ def _render_size(aspect: str) -> Tuple[int, int]:
     mapping = {
         "9:16": (1080, 1920),
         "16:9": (1920, 1080),
+        "4:3": (1440, 1080),
+        "3:4": (1080, 1440),
         "1:1": (1080, 1080),
     }
-    return mapping.get(aspect, (1080, 1920))
+    return mapping.get(normalize_aspect(aspect), (1080, 1920))
 
 
 def _resolve_asset_path(matched: MatchedSegment) -> Optional[Path]:

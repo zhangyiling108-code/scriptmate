@@ -1,4 +1,4 @@
-from cmm.models import MaterialCandidate, Segment
+﻿from cmm.models import MaterialCandidate, Segment
 from cmm.ranker.relevance import Ranker
 
 

@@ -1,10 +1,10 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 from cmm.cache import FileCache
 from cmm.config import MatchingSettings, SourcesSettings
 from cmm.fetcher.fallback import FallbackManager
 from cmm.fetcher.stock_search import StockSearchService
-from cmm.models import MaterialCandidate, Segment
+from cmm.models import MaterialCandidate, Segment, ShotPlan
 
 
 def test_stock_search_dedupes_and_filters_low_resolution(tmp_path: Path):
@@ -112,6 +112,175 @@ def test_stock_search_uses_segment_context_layers_and_subject(tmp_path: Path):
     assert "united states artificial intelligence competition story" in queries
     assert "united states artificial intelligence competition story real footage" in queries
     assert "us ai policy" in queries
+
+
+def test_stock_search_filters_chinese_queries_and_uses_english_fallback(tmp_path: Path):
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text("{}", encoding="utf-8")
+    generic_dir = tmp_path / "generic"
+    generic_dir.mkdir()
+
+    service = StockSearchService(
+        SourcesSettings(),
+        MatchingSettings(video_min_resolution=720, video_orientation="horizontal"),
+        FallbackManager(str(mapping), str(generic_dir)),
+        FileCache(str(tmp_path / "cache")),
+    )
+
+    segment = Segment(
+        id=1,
+        text="从工厂生产，到港口装船，再到全球市场。",
+        visual_type="stock_video",
+        scene_type="b_roll",
+        search_queries=["新能源汽车港口装船"],
+        search_query_layers={"l1": ["汽车出口物流"], "l2": [], "l3": [], "l4": []},
+        keywords_cn=["工厂生产", "港口装船", "全球市场"],
+        visual_brief="港口装船",
+    )
+
+    queries = service._segment_queries(segment)
+
+    assert "cars at shipping port" in queries
+    assert "automobile factory production line" in queries
+    assert all("港口" not in query and "汽车" not in query for query in queries)
+
+
+def test_stock_search_uses_provider_specific_and_shot_queries(tmp_path: Path):
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text("{}", encoding="utf-8")
+    generic_dir = tmp_path / "generic"
+    generic_dir.mkdir()
+
+    service = StockSearchService(
+        SourcesSettings(),
+        MatchingSettings(video_min_resolution=720, video_orientation="horizontal"),
+        FallbackManager(str(mapping), str(generic_dir)),
+        FileCache(str(tmp_path / "cache")),
+    )
+    segment = Segment(
+        id=1,
+        text="汽车出口",
+        visual_type="stock_video",
+        scene_type="b_roll",
+        search_queries=["vehicle export port"],
+        provider_queries={"pexels": ["cars at shipping port"], "pixabay": ["container, port, logistics"]},
+        shots=[ShotPlan(intent="port loading", queries=["cargo ship loading port"])],
+    )
+
+    queries = service._segment_queries(segment)
+    assert "cargo ship loading port" in queries
+    assert "cars at shipping port" in __import__("cmm.fetcher.query_planner", fromlist=["provider_queries_for"]).provider_queries_for(segment, "pexels")
+
+
+def test_stock_search_routes_coverr_and_nasa_sources(tmp_path: Path):
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text("{}", encoding="utf-8")
+    generic_dir = tmp_path / "generic"
+    generic_dir.mkdir()
+
+    service = StockSearchService(
+        SourcesSettings(enabled=["coverr", "nasa"]),
+        MatchingSettings(video_min_resolution=720, video_orientation="horizontal"),
+        FallbackManager(str(mapping), str(generic_dir)),
+        FileCache(str(tmp_path / "cache")),
+    )
+    calls = []
+
+    async def fake_provider_search(provider: str, query: str, segment: Segment):
+        calls.append(provider)
+        return [
+            MaterialCandidate(
+                id="{0}:1".format(provider),
+                source_type=provider,
+                media_type="video",
+                uri="https://example.com/{0}.mp4".format(provider),
+                width=1280,
+                height=720,
+            )
+        ]
+
+    service._cached_provider_search = fake_provider_search  # type: ignore[method-assign]
+
+    results = __import__("asyncio").run(service.search_query("space shuttle", source="all", top_k=5))
+
+    assert set(calls) == {"coverr", "nasa"}
+    assert {candidate.source_type for candidate in results.candidates} == {"coverr", "nasa"}
+
+
+def test_stock_search_filters_avoid_terms_and_adds_visual_caption(tmp_path: Path):
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text("{}", encoding="utf-8")
+    generic_dir = tmp_path / "generic"
+    generic_dir.mkdir()
+
+    service = StockSearchService(
+        SourcesSettings(),
+        MatchingSettings(video_min_resolution=720, video_orientation="horizontal"),
+        FallbackManager(str(mapping), str(generic_dir)),
+        FileCache(str(tmp_path / "cache")),
+    )
+    segment = Segment(id=1, text="AI产业", avoid_terms=["temple"])
+    candidates = [
+        MaterialCandidate(
+            id="bad",
+            source_type="pixabay",
+            media_type="video",
+            uri="https://example.com/bad.mp4",
+            width=1280,
+            height=720,
+            provider_meta={"title": "buddhist temple sunset"},
+        ),
+        MaterialCandidate(
+            id="good",
+            source_type="pixabay",
+            media_type="video",
+            uri="https://example.com/good.mp4",
+            width=1280,
+            height=720,
+            provider_meta={"title": "server room technology"},
+        ),
+    ]
+
+    filtered = service._apply_candidate_filters(candidates, segment)
+
+    assert [candidate.id for candidate in filtered] == ["good"]
+    assert "server" in filtered[0].provider_meta["visual_caption"]
+
+
+def test_stock_search_filters_to_requested_aspect_ratio(tmp_path: Path):
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text("{}", encoding="utf-8")
+    generic_dir = tmp_path / "generic"
+    generic_dir.mkdir()
+
+    service = StockSearchService(
+        SourcesSettings(),
+        MatchingSettings(video_min_resolution=720, target_aspect="4:3", video_orientation="horizontal"),
+        FallbackManager(str(mapping), str(generic_dir)),
+        FileCache(str(tmp_path / "cache")),
+    )
+    candidates = [
+        MaterialCandidate(
+            id="wide",
+            source_type="pexels",
+            media_type="video",
+            uri="https://example.com/wide.mp4",
+            width=1920,
+            height=1080,
+        ),
+        MaterialCandidate(
+            id="classic",
+            source_type="pexels",
+            media_type="video",
+            uri="https://example.com/classic.mp4",
+            width=1440,
+            height=1080,
+        ),
+    ]
+
+    filtered = service._apply_quality_filters(candidates)
+
+    assert [candidate.id for candidate in filtered] == ["classic"]
 
 
 def test_stock_search_expands_multiple_geo_modifiers_for_compare_context(tmp_path: Path):

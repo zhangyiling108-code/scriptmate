@@ -1,4 +1,4 @@
-{
+﻿{
   "经济增长": {
     "queries": ["economic growth", "GDP chart animation", "stock market rising"],
     "fallback_category": "economy"

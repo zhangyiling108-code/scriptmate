@@ -16,6 +16,8 @@ class CardRenderer:
         self.settings = settings
 
     async def render(self, segment: Segment, output_dir: str, score_override: float = 0.95) -> MaterialCandidate:
+        if segment.visual_type == "text_card" or segment.scene_type == "text_card":
+            raise ValueError("Text card generation is disabled.")
         target_dir = Path(output_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
         filename = "segment-{0}.png".format(segment.id)

@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -40,20 +41,18 @@ class _FakeClient:
         return self._responses.pop(0)
 
 
-@pytest.mark.asyncio
-async def test_download_file_streams_remote_content(tmp_path, monkeypatch):
+def test_download_file_streams_remote_content(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "cmm.fetcher.downloader.build_async_client",
         lambda timeout=30.0: _FakeClient([_FakeResponse([b"hello ", b"world"])]),
     )
 
-    path = await download_file("https://example.com/test.bin", str(tmp_path))
+    path = asyncio.run(download_file("https://example.com/test.bin", str(tmp_path)))
 
     assert Path(path).read_bytes() == b"hello world"
 
 
-@pytest.mark.asyncio
-async def test_download_file_retries_and_raises_clean_error(tmp_path, monkeypatch):
+def test_download_file_retries_and_raises_clean_error(tmp_path, monkeypatch):
     client = _FakeClient([
         _FakeResponse(error=RuntimeError("boom-1")),
         _FakeResponse(error=RuntimeError("boom-2")),
@@ -61,6 +60,6 @@ async def test_download_file_retries_and_raises_clean_error(tmp_path, monkeypatc
     monkeypatch.setattr("cmm.fetcher.downloader.build_async_client", lambda timeout=30.0: client)
 
     with pytest.raises(RuntimeError, match="download failed"):
-        await download_file("https://example.com/test.bin", str(tmp_path), max_retries=1)
+        asyncio.run(download_file("https://example.com/test.bin", str(tmp_path), max_retries=1))
 
     assert not list(tmp_path.glob("*.part"))

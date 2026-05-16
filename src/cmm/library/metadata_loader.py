@@ -12,14 +12,14 @@ def load_metadata(path: str) -> Dict[str, Dict[str, object]]:
         return {}
     if target.suffix.lower() == ".jsonl":
         records = {}
-        for line in target.read_text(encoding="utf-8").splitlines():
+        for line in target.read_text(encoding="utf-8-sig").splitlines():
             if not line.strip():
                 continue
             item = json.loads(line)
             records[item["path"]] = item
         return records
 
-    with target.open("r", encoding="utf-8", newline="") as fh:
+    with target.open("r", encoding="utf-8-sig", newline="") as fh:
         reader = csv.DictReader(fh)
         records = {}
         for row in reader:

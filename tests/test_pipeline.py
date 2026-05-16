@@ -1,9 +1,9 @@
-import json
+﻿import json
 from pathlib import Path
 
 from cmm.config import ExternalSourceSettings, Settings
 from cmm.models import MatchInput, MaterialCandidate, Segment, SegmentMatch
-from cmm.pipeline import _action_for_segment, _build_summary, match_script
+from cmm.pipeline import _action_for_segment, _build_summary, _is_candidate_acceptable, _matching_for_run, _without_text_cards, match_script
 
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -135,7 +135,7 @@ def test_match_script_writes_manifest_and_segment_outputs(tmp_path: Path, monkey
     manifest = json.loads((tmp_path / "output" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["segments"][0]["strategy"].startswith("策略：")
     assert manifest["segments"][1]["segment_role"] == "claim"
-    assert manifest["segments"][2]["scene_type"] == "text_card"
+    assert manifest["segments"][2]["scene_type"] == "infographic"
     assert manifest["segments"][1]["recommended_duration"] == 3.0
     assert manifest["segments"][0]["asset_class"] == "host_placeholder"
     assert manifest["segments"][0]["rhythm_tag"] == "intro_hold"
@@ -158,13 +158,14 @@ def test_match_script_writes_manifest_and_segment_outputs(tmp_path: Path, monkey
     assert manifest["segments"][1]["chosen"]["orientation"] == "vertical"
     assert manifest["segments"][1]["chosen"]["quality_tier"] == "ready_vertical"
     assert manifest["segments"][1]["chosen"]["crop_risk"] == "low"
-    assert manifest["segments"][2]["asset_class"] == "summary_card"
-    assert manifest["segments"][2]["rhythm_tag"] == "summary_pause"
+    assert manifest["segments"][2]["asset_class"] == "explanatory_image"
+    assert manifest["segments"][2]["rhythm_tag"] == "support_hold"
     assert manifest["segments"][2]["use_status"] == "ready"
     assert manifest["segments"][2]["confidence_band"] == "high"
     assert manifest["segments"][2]["review_priority"] == "none"
     assert manifest["segments"][2]["review_rank"] == 0
-    assert manifest["segments"][2]["edit_suggestion"].startswith("作为总结卡停留 2-3 秒")
+    assert manifest["segments"][2]["chosen"]["source_label"] == "pexels.video"
+    assert manifest["segments"][2]["edit_suggestion"].startswith("建议做轻微推拉")
     overview = (tmp_path / "output" / "segments_overview.csv").read_text(encoding="utf-8")
     assert "segment_role,text,narrative_subject,context_statement,context_tags,visual_type,scene_type,asset_class,rhythm_tag,use_status,confidence_band,review_priority,review_rank,recommended_duration,duration_fit,resolution,orientation,quality_tier,crop_risk,source_label,direct_url,source_page,external_search_links,selection_tag,score" in overview
     assert "1,hook,大家好，今天聊经济增长" in overview
@@ -205,6 +206,19 @@ def test_build_summary_separates_generic_real_from_generated():
     assert summary.exact == 1
     assert summary.generic_real == 1
     assert summary.generated == 1
+
+
+def test_text_card_candidates_are_blocked_even_with_generated_fallback():
+    settings = Settings()
+    settings.downgrade.generated_fallback = True
+    matching = _matching_for_run(settings.matching, "9:16", "1080")
+    segment = Segment(id=1, text="最后总结一下", visual_type="text_card", scene_type="text_card")
+    text_card = MaterialCandidate(id="text:1", source_type="text_card", media_type="image", uri="/tmp/text.png", relevance_score=1.0)
+    data_card = MaterialCandidate(id="data:1", source_type="data_card", media_type="image", uri="/tmp/data.png", relevance_score=1.0)
+
+    assert _is_candidate_acceptable(segment, text_card, matching, settings) is False
+    assert _is_candidate_acceptable(segment, data_card, matching, settings) is True
+    assert _without_text_cards([text_card, data_card]) == [data_card]
 
 
 def test_match_script_raises_when_judge_fails_and_fallback_is_disabled(tmp_path: Path, monkeypatch):

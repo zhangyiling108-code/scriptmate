@@ -21,7 +21,7 @@ class FileCache:
         path = self.path_for(namespace, key)
         if not path.exists():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
 
     def save_json(self, namespace: str, key: str, payload: Any) -> Path:
         path = self.path_for(namespace, key)

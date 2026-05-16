@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
@@ -6,15 +6,17 @@ from typing import Dict, Iterable, List, Tuple
 
 from cmm.cache import FileCache
 from cmm.config import ModelSettings
+from cmm.fetcher.query_planner import candidate_bucket, visual_caption_for_candidate
 from cmm.models import MaterialCandidate, Segment
 from cmm.utils.http import build_async_client
 
 
 class SemanticScorer:
-    def __init__(self, settings: ModelSettings, cache: FileCache, allow_fallback: bool = False):
+    def __init__(self, settings: ModelSettings, cache: FileCache, allow_fallback: bool = False, allow_vision: bool = False):
         self.settings = settings
         self.cache = cache
         self.allow_fallback = allow_fallback
+        self.allow_vision = allow_vision
 
     async def score_candidates(self, segment: Segment, candidates: List[MaterialCandidate], batch_size: int = 4) -> List[MaterialCandidate]:
         if not candidates:
@@ -56,6 +58,7 @@ class SemanticScorer:
                 candidate.relevance_score = float(item.get("score", 0.0))
                 adjustment_note = self._apply_editorial_adjustments(segment, candidate)
                 candidate.match_level = self._level_from_score(candidate.relevance_score)
+                candidate.provider_meta["candidate_bucket"] = candidate_bucket(candidate.relevance_score)
                 base_reason = str(item.get("reason", ""))
                 candidate.reason = "{0} {1}".format(base_reason, adjustment_note).strip() if adjustment_note else base_reason
                 scored.append(candidate)
@@ -387,19 +390,34 @@ class SemanticScorer:
             }
         ]
         for index, candidate in enumerate(candidates, start=1):
+            visual_caption = candidate.provider_meta.get("visual_caption") or visual_caption_for_candidate(
+                [
+                    candidate.source_page,
+                    candidate.thumbnail_url,
+                    candidate.preview_uri,
+                    candidate.reason,
+                    " ".join(candidate.tags),
+                    str(candidate.provider_meta.get("title", "")),
+                ]
+            )
+            candidate.provider_meta["visual_caption"] = visual_caption
             content.append(
                 {
                     "type": "text",
-                    "text": "Candidate {0}: id={1}, provider={2}, media_type={3}, source_page={4}".format(
+                    "text": "Candidate {0}: id={1}, provider={2}, media_type={3}, source_page={4}, thumbnail={5}, title={6}, tags={7}, visual_caption={8}".format(
                         index,
                         candidate.id,
                         candidate.source_type,
                         candidate.media_type,
                         candidate.source_page,
+                        candidate.thumbnail_url or candidate.preview_uri,
+                        candidate.provider_meta.get("title", ""),
+                        ", ".join(candidate.tags[:8]),
+                        visual_caption,
                     ),
                 }
             )
-            if candidate.thumbnail_url or candidate.preview_uri:
+            if self._supports_image_input() and (candidate.thumbnail_url or candidate.preview_uri):
                 content.append({"type": "image_url", "image_url": {"url": candidate.thumbnail_url or candidate.preview_uri}})
         payload = {
             "model": self.settings.model,
@@ -441,6 +459,15 @@ class SemanticScorer:
                 }
             normalized.append(item)
         return normalized
+
+    def _supports_image_input(self) -> bool:
+        if not self.allow_vision:
+            return False
+        provider = str(self.settings.provider or "").lower()
+        base_url = str(self.settings.base_url or "").lower()
+        if provider == "deepseek" or "api.deepseek.com" in base_url:
+            return False
+        return True
 
     def _cache_key(self, segment: Segment, batch: List[MaterialCandidate]) -> str:
         return json.dumps(

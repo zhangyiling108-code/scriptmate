@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import List
 
+from cmm.aspect import aspect_fit, aspect_matches
 from cmm.config import MatchingSettings
 from cmm.fetcher.base import BaseStockProvider
 from cmm.models import MaterialCandidate, Segment
@@ -34,7 +35,7 @@ class PixabayProvider(BaseStockProvider):
             async with build_async_client() as client:
                 response = await client.get(
                     "https://pixabay.com/api/videos/",
-                    params={"key": self.api_key, "q": query, "per_page": 3},
+                    params={"key": self.api_key, "q": query, "per_page": _provider_page_size(self.matching)},
                 )
                 response.raise_for_status()
                 return response.json()
@@ -68,6 +69,8 @@ class PixabayProvider(BaseStockProvider):
                     quality_signals={
                         "hd": (best.get("height") or 0) >= 1080,
                         "orientation": "vertical" if (best.get("height") or 0) >= (best.get("width") or 0) else "horizontal",
+                        "target_aspect": self.matching.target_aspect,
+                        "aspect_fit": aspect_fit(best.get("width") or 0, best.get("height") or 0, self.matching.target_aspect),
                         "duration_fit": _duration_fit(segment.duration_hint, duration),
                         "resolution_fit": resolution_fit,
                     },
@@ -88,7 +91,7 @@ class PixabayProvider(BaseStockProvider):
             async with build_async_client() as client:
                 response = await client.get(
                     "https://pixabay.com/api/",
-                    params={"key": self.api_key, "q": query, "per_page": 3, "image_type": "photo"},
+                    params={"key": self.api_key, "q": query, "per_page": _provider_page_size(self.matching), "image_type": "photo"},
                 )
                 response.raise_for_status()
                 return response.json()
@@ -118,6 +121,8 @@ class PixabayProvider(BaseStockProvider):
                     quality_signals={
                         "hd": (item.get("imageHeight") or 0) >= 1080,
                         "orientation": "vertical" if (item.get("imageHeight") or 0) >= (item.get("imageWidth") or 0) else "horizontal",
+                        "target_aspect": self.matching.target_aspect,
+                        "aspect_fit": aspect_fit(item.get("imageWidth") or 0, item.get("imageHeight") or 0, self.matching.target_aspect),
                         "resolution_fit": _resolution_fit(item.get("imageWidth") or 0, item.get("imageHeight") or 0, self.matching.video_min_resolution),
                     },
                     provider_meta={"query": query, "user": item.get("user", ""), "kind": "image", "title": item.get("tags", "")},
@@ -139,6 +144,8 @@ def _select_video_variant(videos, matching: MatchingSettings):
             return False
         if not _orientation_accepts(width, height, matching.video_orientation):
             return False
+        if not aspect_matches(width, height, matching.target_aspect):
+            return False
         return True
 
     eligible = [variant for variant in variants if qualifies(variant)]
@@ -147,6 +154,7 @@ def _select_video_variant(videos, matching: MatchingSettings):
         for variant in variants
         if min(variant.get("width") or 0, variant.get("height") or 0) >= 720
         and _orientation_accepts(variant.get("width") or 0, variant.get("height") or 0, matching.video_orientation)
+        and aspect_matches(variant.get("width") or 0, variant.get("height") or 0, matching.target_aspect)
     ]
     pool = eligible or acceptable_floor or variants
     return min(
@@ -158,6 +166,10 @@ def _select_video_variant(videos, matching: MatchingSettings):
             variant.get("height") or 0,
         ),
     )
+
+
+def _provider_page_size(matching: MatchingSettings) -> int:
+    return min(max(int(matching.search_pool_size or 3), 3), 80)
 
 
 def _orientation_accepts(width: int, height: int, orientation: str) -> bool:

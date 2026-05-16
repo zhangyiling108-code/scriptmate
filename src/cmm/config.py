@@ -3,15 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ModelSettings(BaseModel):
-    provider: str = "openai"
-    model: str = "gpt-4.1-mini"
+    provider: str = "deepseek"
+    model: str = "deepseek-v4-flash"
     api_key: str = ""
-    base_url: str = "https://api.openai.com/v1"
+    base_url: str = "https://api.deepseek.com"
     timeout_seconds: float = 30.0
     max_retries: int = 1
 
@@ -39,6 +39,8 @@ class SourcesSettings(BaseModel):
     enabled: List[str] = Field(default_factory=lambda: ["pexels", "pixabay"])
     pexels: SourceApiSettings = SourceApiSettings()
     pixabay: SourceApiSettings = SourceApiSettings()
+    coverr: SourceApiSettings = SourceApiSettings()
+    nasa: SourceApiSettings = SourceApiSettings(base_url="https://images-api.nasa.gov")
     extra: List[ExternalSourceSettings] = Field(default_factory=list)
 
     def configured_external_sources(self) -> List[ExternalSourceSettings]:
@@ -51,7 +53,27 @@ class MatchingSettings(BaseModel):
     min_score: float = 0.55
     strong_score: float = 0.70
     video_min_resolution: int = 1080
+    target_aspect: str = "9:16"
     video_orientation: str = "vertical"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _backfill_target_aspect(cls, data):
+        if not isinstance(data, dict):
+            return data
+        if "target_aspect" in data:
+            return data
+        orientation = data.get("video_orientation")
+        if orientation == "horizontal":
+            data = dict(data)
+            data["target_aspect"] = "16:9"
+        elif orientation == "square":
+            data = dict(data)
+            data["target_aspect"] = "1:1"
+        elif orientation == "vertical":
+            data = dict(data)
+            data["target_aspect"] = "9:16"
+        return data
 
 
 class GenerationSettings(BaseModel):
@@ -77,6 +99,14 @@ class OutputSettings(BaseModel):
     cache_dir: str = ""
 
 
+class CapCutSettings(BaseModel):
+    base_url: str = "http://127.0.0.1:8765"
+
+
+class JudgeSettings(BaseModel):
+    vision: bool = False
+
+
 class DowngradeSettings(BaseModel):
     planner_fallback: bool = False
     judge_fallback: bool = False
@@ -92,13 +122,15 @@ class Settings(BaseSettings):
     )
 
     planner_model: ModelSettings = ModelSettings()
-    judge_model: ModelSettings = ModelSettings(model="gpt-4o-mini")
+    judge_model: ModelSettings = ModelSettings()
     sources: SourcesSettings = SourcesSettings()
     matching: MatchingSettings = MatchingSettings()
     generation: GenerationSettings = GenerationSettings()
     library: LibrarySettings = LibrarySettings()
     cards: CardSettings = CardSettings()
     output: OutputSettings = OutputSettings()
+    capcut: CapCutSettings = CapCutSettings()
+    judge: JudgeSettings = JudgeSettings()
     downgrade: DowngradeSettings = DowngradeSettings()
 
     @classmethod
@@ -116,9 +148,9 @@ class Settings(BaseSettings):
                 data.get("planner_model", legacy_llm),
                 {
                     "provider": "PLANNER_MODEL_PROVIDER",
-                    "model": "PLANNER_MODEL_NAME",
-                    "api_key": ["PLANNER_MODEL_API_KEY", "OPENAI_API_KEY"],
-                    "base_url": ["PLANNER_MODEL_BASE_URL", "OPENAI_BASE_URL"],
+                    "model": ["PLANNER_MODEL_NAME", "PLANNER_MODEL"],
+                    "api_key": ["PLANNER_MODEL_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"],
+                    "base_url": ["PLANNER_MODEL_BASE_URL", "DEEPSEEK_BASE_URL", "OPENAI_BASE_URL"],
                     "timeout_seconds": "PLANNER_MODEL_TIMEOUT_SECONDS",
                     "max_retries": "PLANNER_MODEL_MAX_RETRIES",
                 },
@@ -127,9 +159,9 @@ class Settings(BaseSettings):
                 data.get("judge_model", legacy_llm),
                 {
                     "provider": "JUDGE_MODEL_PROVIDER",
-                    "model": "JUDGE_MODEL_NAME",
-                    "api_key": ["JUDGE_MODEL_API_KEY", "OPENAI_API_KEY"],
-                    "base_url": ["JUDGE_MODEL_BASE_URL", "OPENAI_BASE_URL"],
+                    "model": ["JUDGE_MODEL_NAME", "JUDGE_MODEL"],
+                    "api_key": ["JUDGE_MODEL_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"],
+                    "base_url": ["JUDGE_MODEL_BASE_URL", "DEEPSEEK_BASE_URL", "OPENAI_BASE_URL"],
                     "timeout_seconds": "JUDGE_MODEL_TIMEOUT_SECONDS",
                     "max_retries": "JUDGE_MODEL_MAX_RETRIES",
                 },
@@ -143,6 +175,14 @@ class Settings(BaseSettings):
                 "pixabay": _merge_env_overrides(
                     data.get("sources", {}).get("pixabay", legacy_stock.get("pixabay", {})),
                     {"api_key": "PIXABAY_API_KEY", "base_url": "PIXABAY_BASE_URL"},
+                ),
+                "coverr": _merge_env_overrides(
+                    data.get("sources", {}).get("coverr", legacy_stock.get("coverr", {})),
+                    {"api_key": "COVERR_API_KEY", "base_url": "COVERR_BASE_URL"},
+                ),
+                "nasa": _merge_env_overrides(
+                    data.get("sources", {}).get("nasa", legacy_stock.get("nasa", {})),
+                    {"api_key": "NASA_IMAGES_API_KEY", "base_url": "NASA_IMAGES_BASE_URL"},
                 ),
                 "extra": _load_external_sources(data.get("sources", {}).get("extra", [])),
             },
@@ -160,6 +200,18 @@ class Settings(BaseSettings):
                 data.get("output", {}),
                 {
                     "cache_dir": "SCRIPTMATE_CACHE_DIR",
+                },
+            ),
+            "capcut": _merge_env_overrides(
+                data.get("capcut", {}),
+                {
+                    "base_url": "CAPCUT_MATE_BASE_URL",
+                },
+            ),
+            "judge": _merge_env_overrides(
+                data.get("judge", {}),
+                {
+                    "vision": "SCRIPTMATE_JUDGE_VISION",
                 },
             ),
             "downgrade": _merge_env_overrides(
@@ -180,8 +232,7 @@ def _load_toml(path: Path):
         import tomllib
     except ModuleNotFoundError:  # pragma: no cover
         import tomli as tomllib  # type: ignore
-    with path.open("rb") as fh:
-        return tomllib.load(fh)
+    return tomllib.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def _merge_env_overrides(payload, env_map):

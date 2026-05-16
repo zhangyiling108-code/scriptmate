@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 from pathlib import Path
@@ -27,7 +27,7 @@ def write_match_outputs(result: MatchResult, output_dir: str) -> None:
     target = ensure_dir(output_dir)
     write_json(str(Path(target) / "analysis.json"), model_dump_compat(result.analysis))
     write_json(str(Path(target) / "manifest.json"), _build_manifest(result))
-    Path(target, "summary.md").write_text(build_report(result), encoding="utf-8")
+    Path(target, "summary.md").write_text(build_report(result), encoding="utf-8-sig")
     _write_segments_overview_csv(result, Path(target) / "segments_overview.csv")
 
     segments_dir = ensure_dir(str(Path(target) / "segments"))
@@ -64,11 +64,14 @@ def _write_segments_overview_csv(result: MatchResult, path: Path) -> None:
         "external_search_links",
         "selection_tag",
         "score",
+        "candidate_bucket",
         "fallback_used",
+        "shots",
+        "avoid_terms",
         "strategy",
         "edit_suggestion",
     ]
-    with path.open("w", encoding="utf-8", newline="") as fh:
+    with path.open("w", encoding="utf-8-sig", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         for item in result.segments:
@@ -101,7 +104,10 @@ def _write_segments_overview_csv(result: MatchResult, path: Path) -> None:
                     "external_search_links": " | ".join(link["url"] for link in item.external_search_links),
                     "selection_tag": selection_tag(chosen, role="chosen") if chosen else "",
                     "score": chosen.relevance_score if chosen else "",
+                    "candidate_bucket": chosen.provider_meta.get("candidate_bucket", "") if chosen else "",
                     "fallback_used": item.fallback_used,
+                    "shots": " | ".join(shot.intent for shot in item.segment.shots),
+                    "avoid_terms": "|".join(item.segment.avoid_terms),
                     "strategy": item.notes[0] if item.notes else "",
                     "edit_suggestion": _edit_suggestion(item),
                 }
@@ -125,6 +131,9 @@ def _build_manifest(result: MatchResult):
                 "type": item.segment.visual_type,
                 "scene_type": item.segment.scene_type,
                 "visual_brief": item.segment.visual_brief,
+                "provider_queries": item.segment.provider_queries,
+                "avoid_terms": item.segment.avoid_terms,
+                "shots": [model_dump_compat(shot) for shot in item.segment.shots],
                 "recommended_duration": item.segment.duration_hint,
                 "asset_class": asset_class(item),
                 "rhythm_tag": rhythm_tag(item),
@@ -154,6 +163,7 @@ def _candidate_payload(candidate, primary=None, role="chosen"):
         "source_label": source_label(candidate),
         "selection_tag": selection_tag(candidate, primary=primary, role=role),
         "score": candidate.relevance_score,
+        "candidate_bucket": candidate.provider_meta.get("candidate_bucket"),
         "level": candidate.match_level,
         "duration_fit": candidate.quality_signals.get("duration_fit"),
         "resolution": resolution_label(candidate),
@@ -176,7 +186,7 @@ def _edit_suggestion(item):
     if segment.visual_type == "skip":
         return "保留真人口播或开场镜头，不自动插入素材。"
     if segment.visual_type == "text_card":
-        return "作为总结卡停留 2-3 秒，配合加粗标题或结论字幕。"
+        return "文字卡生成已禁用；用真实素材承接总结，并在剪辑软件里按需叠加字幕。"
     if chosen and chosen.source_type == "data_card":
         topic = chosen.provider_meta.get("chart_topic")
         if topic == "health":

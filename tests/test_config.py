@@ -3,6 +3,33 @@ from pathlib import Path
 from cmm.config import Settings
 
 
+def test_settings_default_to_deepseek_api(monkeypatch):
+    for name in (
+        "PLANNER_MODEL_PROVIDER",
+        "PLANNER_MODEL_NAME",
+        "PLANNER_MODEL",
+        "PLANNER_MODEL_API_KEY",
+        "PLANNER_MODEL_BASE_URL",
+        "JUDGE_MODEL_PROVIDER",
+        "JUDGE_MODEL_NAME",
+        "JUDGE_MODEL",
+        "JUDGE_MODEL_API_KEY",
+        "JUDGE_MODEL_BASE_URL",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    settings = Settings()
+    assert settings.planner_model.provider == "deepseek"
+    assert settings.planner_model.model == "deepseek-v4-flash"
+    assert settings.planner_model.base_url == "https://api.deepseek.com"
+    assert settings.judge_model.provider == "deepseek"
+    assert settings.judge_model.model == "deepseek-v4-flash"
+    assert settings.judge_model.base_url == "https://api.deepseek.com"
+
+
 def test_settings_load_new_and_legacy_keys(tmp_path: Path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
@@ -61,6 +88,31 @@ model = "gpt-4o-mini"
     assert settings.judge_model.base_url == "https://api.openai.com/v1"
 
 
+def test_settings_accept_deepseek_env_fallback(tmp_path: Path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[planner_model]
+provider = "deepseek"
+model = "deepseek-v4-flash"
+
+[judge_model]
+provider = "deepseek"
+model = "deepseek-v4-flash"
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
+    settings = Settings.from_file(str(config_path))
+
+    assert settings.planner_model.api_key == "deepseek-test-key"
+    assert settings.judge_model.api_key == "deepseek-test-key"
+    assert settings.planner_model.base_url == "https://api.deepseek.com"
+    assert settings.judge_model.base_url == "https://api.deepseek.com"
+
+
 def test_settings_read_downgrade_flags_from_env(tmp_path: Path, monkeypatch):
     config_path = tmp_path / "config.toml"
     config_path.write_text("", encoding="utf-8")
@@ -75,6 +127,42 @@ def test_settings_read_downgrade_flags_from_env(tmp_path: Path, monkeypatch):
     assert settings.downgrade.judge_fallback is True
     assert settings.downgrade.search_fallback is True
     assert settings.downgrade.generated_fallback is True
+
+
+def test_settings_load_capcut_base_url_from_config_and_env(tmp_path: Path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[capcut]
+base_url = "http://localhost:9876"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    settings = Settings.from_file(str(config_path))
+    assert settings.capcut.base_url == "http://localhost:9876"
+
+    monkeypatch.setenv("CAPCUT_MATE_BASE_URL", "http://localhost:8765")
+    settings = Settings.from_file(str(config_path))
+    assert settings.capcut.base_url == "http://localhost:8765"
+
+
+def test_settings_load_judge_vision_from_config_and_env(tmp_path: Path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[judge]
+vision = true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    settings = Settings.from_file(str(config_path))
+    assert settings.judge.vision is True
+
+    monkeypatch.setenv("SCRIPTMATE_JUDGE_VISION", "false")
+    settings = Settings.from_file(str(config_path))
+    assert settings.judge.vision is False
 
 
 def test_settings_load_external_paid_sources_and_api_key_from_env(tmp_path: Path, monkeypatch):

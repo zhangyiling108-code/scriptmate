@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections import Counter
 
@@ -31,6 +31,11 @@ def build_report(result: MatchResult) -> str:
     confidence_counts = Counter(confidence_band(item) for item in result.segments)
     review_counts = Counter(review_priority(item) for item in result.segments)
     quality_counts = Counter(quality_tier(item.chosen) for item in result.segments if quality_tier(item.chosen))
+    bucket_counts = Counter(
+        item.chosen.provider_meta.get("candidate_bucket", "generated" if item.chosen.source_type == "data_card" else "")
+        for item in result.segments
+        if item.chosen is not None
+    )
     review_queue = sorted(
         (item for item in result.segments if review_rank(item) > 0),
         key=lambda item: (-review_rank(item), _confidence_sort_key(confidence_band(item)), item.segment.id),
@@ -56,6 +61,7 @@ def build_report(result: MatchResult) -> str:
         "- 置信区间：{0}".format(_format_counter(confidence_counts)),
         "- 复核优先级：{0}".format(_format_counter(review_counts)),
         "- 质量标签：{0}".format(_format_counter(quality_counts)),
+        "- 候选分层：{0}".format(_format_counter(bucket_counts)),
         "",
         "## 复核队列",
         "",
@@ -94,6 +100,10 @@ def build_report(result: MatchResult) -> str:
             )
             lines.append("- 扩展素材库：{0}".format(external_summary))
         lines.append("- 建议：{0}".format(use_status(item)))
+        if item.segment.shots:
+            lines.append("- 镜头拆分：{0}".format(" / ".join(shot.intent for shot in item.segment.shots)))
+        if item.segment.avoid_terms:
+            lines.append("- 排除词：{0}".format(" / ".join(item.segment.avoid_terms[:8])))
         lines.append("- 置信：{0} / 复核优先级：{1}".format(confidence_band(item), review_priority(item)))
         duration_fit_value = duration_fit(item.chosen)
         if duration_fit_value:
@@ -130,6 +140,9 @@ def build_report(result: MatchResult) -> str:
                     item.chosen.relevance_score,
                 )
             )
+            bucket = item.chosen.provider_meta.get("candidate_bucket")
+            if bucket:
+                lines.append("- 候选分层：{0}".format(bucket))
             lines.append("- 直链：{0}".format(item.chosen.uri))
             if item.chosen.source_page:
                 lines.append("- 来源页：{0}".format(item.chosen.source_page))

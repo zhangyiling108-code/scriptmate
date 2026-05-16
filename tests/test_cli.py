@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -75,6 +75,7 @@ def test_match_command_defaults_to_link_only_outputs(tmp_path: Path, monkeypatch
         captured["save_candidates"] = match_input.save_candidates
         captured["top_results"] = match_input.top_results
         captured["resolution"] = match_input.resolution
+        captured["aspect"] = match_input.aspect
         return MatchResult(
             created_at="2026-03-30T00:00:00+00:00",
             total_segments=0,
@@ -85,12 +86,34 @@ def test_match_command_defaults_to_link_only_outputs(tmp_path: Path, monkeypatch
         )
 
     monkeypatch.setattr("cmm.cli.match_script", fake_match_script)
-    result = runner.invoke(app, ["match", "test script", "-o", str(tmp_path / "out"), "--config", str(config)])
+    result = runner.invoke(app, ["match", "test script", "-o", str(tmp_path / "out"), "--aspect", "3:4", "--config", str(config)])
 
     assert result.exit_code == 0
     assert captured["save_candidates"] is False
     assert captured["top_results"] == 3
     assert captured["resolution"] == "1080"
+    assert captured["aspect"] == "3:4"
+
+
+def test_material_search_commands_require_aspect(tmp_path: Path):
+    config = _write_realish_config(tmp_path)
+
+    result_match = runner.invoke(app, ["match", "test script", "-o", str(tmp_path / "out"), "--config", str(config)])
+    result_search = runner.invoke(app, ["search", "economic growth", "--config", str(config)])
+
+    assert result_match.exit_code != 0
+    assert result_search.exit_code != 0
+    assert "--aspect" in (result_match.stdout + result_match.stderr)
+    assert "--aspect" in (result_search.stdout + result_search.stderr)
+
+
+def test_aspect_validation_rejects_unsupported_ratio(tmp_path: Path):
+    config = _write_realish_config(tmp_path)
+
+    result = runner.invoke(app, ["search", "economic growth", "--aspect", "2:1", "--config", str(config)])
+
+    assert result.exit_code != 0
+    assert "Unsupported aspect ratio" in (result.stdout + result.stderr)
 
 
 def test_init_command_writes_config_non_interactively(tmp_path: Path):
@@ -129,3 +152,4 @@ def test_doctor_and_config_show_commands_output_expected_fields(tmp_path: Path):
     assert '"matching"' in result_doctor.stdout
     assert '"api_key"' in result_show.stdout
     assert '"api_key": "x"' not in result_show.stdout
+    assert '"vision_enabled"' in result_doctor.stdout
