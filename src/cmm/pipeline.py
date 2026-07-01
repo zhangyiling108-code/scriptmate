@@ -13,7 +13,7 @@ from cmm.cards import ChartRenderer
 from cmm.config import Settings
 from cmm.fetcher import FallbackManager, StockSearchService
 from cmm.fetcher.downloader import download_file
-from cmm.library import LocalLibraryMatcher, scan_library
+from cmm.library import LocalLibraryMatcher, default_index_path, scan_library
 from cmm.models import AnalysisResult, MatchInput, MatchResult, MatchSummary, MaterialCandidate, SearchResult, SegmentMatch
 from cmm.outputs import write_match_outputs
 from cmm.ranker import Ranker
@@ -82,8 +82,19 @@ async def match_script(
         return result
 
     assets = []
+    library_warnings: List[str] = []
     if library_root:
-        assets = scan_library(library_root, metadata_path=library_meta or "").assets
+        library_index_path = default_index_path(library_root)
+        scan_result = scan_library(
+            library_root,
+            metadata_path=library_meta or "",
+            output_path=library_index_path,
+            cache_path=library_index_path,
+        )
+        assets = scan_result.assets
+        for asset in assets:
+            for warning in asset.warnings:
+                library_warnings.append("{0}: {1}".format(asset.relative_path or asset.path, warning))
 
     local_matcher = LocalLibraryMatcher()
     fallback_manager = FallbackManager(
@@ -108,6 +119,7 @@ async def match_script(
     segment_fallbacks: Dict[int, bool] = {}
     if analysis_fallback_used:
         warnings.append("Planner fallback used local heuristic analysis.")
+    warnings.extend(library_warnings[:20])
 
     for segment in analysis.segments:
         segment_notes[segment.id] = []
@@ -117,7 +129,12 @@ async def match_script(
             continue
 
         segment_candidates: List[MaterialCandidate] = []
-        local_candidates = local_matcher.match(segment, assets, top_k=max(match_input.top_results, settings.matching.top_results))
+        local_candidates = local_matcher.match(
+            segment,
+            assets,
+            top_k=max(match_input.top_results, settings.matching.top_results),
+            target_aspect=effective_matching.target_aspect,
+        )
         if local_candidates:
             segment_candidates.extend(local_candidates)
 

@@ -13,6 +13,7 @@ from cmm import __version__
 from cmm.aspect import normalize_aspect
 from cmm.cache import FileCache
 from cmm.config import Settings
+from cmm.library import default_index_path, scan_library
 from cmm.logging import configure_logging
 from cmm.models import MatchInput, model_dump_compat
 from cmm.pipeline import analyze_script, match_script, search_single_query
@@ -334,6 +335,28 @@ def config_show(
         },
         "matching": model_dump_compat(settings.matching),
         "output": model_dump_compat(settings.output),
+    }
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@app.command("library-index")
+def library_index(
+    root: Path = typer.Option(..., "--root", help="Local material library root to scan."),
+    metadata: Optional[Path] = typer.Option(None, "--metadata", help="Optional CSV or JSONL metadata file."),
+    output: Optional[Path] = typer.Option(None, "--output", help="Path for the generated index JSON."),
+):
+    output_path = output or Path(default_index_path(str(root)))
+    result = scan_library(
+        str(root),
+        metadata_path=str(metadata) if metadata else "",
+        output_path=str(output_path),
+        cache_path=str(output_path),
+    )
+    payload = model_dump_compat(result)
+    payload["summary"] = {
+        "asset_count": len(result.assets),
+        "warning_count": sum(len(asset.warnings) for asset in result.assets),
+        "output_path": str(output_path),
     }
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 

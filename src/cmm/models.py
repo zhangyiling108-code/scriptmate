@@ -50,6 +50,7 @@ class AnalysisResult(BaseModel):
 
 class LibraryAsset(BaseModel):
     path: str
+    relative_path: str = ""
     title: str = ""
     description: str = ""
     tags: List[str] = Field(default_factory=list)
@@ -58,6 +59,14 @@ class LibraryAsset(BaseModel):
     duration: Optional[float] = None
     width: Optional[int] = None
     height: Optional[int] = None
+    file_size: Optional[int] = None
+    mtime: Optional[float] = None
+    aspect_ratio: str = ""
+    orientation: str = ""
+    searchable_text: str = ""
+    fingerprint: str = ""
+    metadata_complete: bool = False
+    warnings: List[str] = Field(default_factory=list)
 
 
 class MaterialCandidate(BaseModel):

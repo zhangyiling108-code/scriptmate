@@ -143,6 +143,9 @@ def build_report(result: MatchResult) -> str:
             bucket = item.chosen.provider_meta.get("candidate_bucket")
             if bucket:
                 lines.append("- 候选分层：{0}".format(bucket))
+            score_detail = _score_detail_line(item.chosen)
+            if score_detail:
+                lines.append("- 评分细项：{0}".format(score_detail))
             lines.append("- 直链：{0}".format(item.chosen.uri))
             if item.chosen.source_page:
                 lines.append("- 来源页：{0}".format(item.chosen.source_page))
@@ -252,3 +255,30 @@ def _timeline_line(item) -> str:
         tag,
         score,
     )
+
+
+def _score_detail_line(candidate) -> str:
+    if not candidate:
+        return ""
+    breakdown = candidate.quality_signals.get("score_breakdown", {})
+    if not breakdown:
+        return ""
+    parts = []
+    for key, label in (
+        ("semantic", "semantic"),
+        ("technical", "technical"),
+        ("local_match", "local"),
+        ("aspect_fit", "aspect"),
+        ("adjustment", "adjustment"),
+    ):
+        value = breakdown.get(key)
+        if value in ("", None):
+            continue
+        parts.append("{0}={1}".format(label, value))
+    method = candidate.quality_signals.get("score_method") or candidate.provider_meta.get("score_method")
+    if method:
+        parts.append("method={0}".format(method))
+    notes = candidate.quality_signals.get("score_notes", [])
+    if notes:
+        parts.append("notes={0}".format(" / ".join(str(note) for note in notes[:2])))
+    return "; ".join(parts)

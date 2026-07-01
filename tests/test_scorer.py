@@ -257,3 +257,36 @@ def test_score_candidates_adds_candidate_bucket(tmp_path, monkeypatch):
     scored = __import__("asyncio").run(scorer.score_candidates(segment, [candidate]))
 
     assert scored[0].provider_meta["candidate_bucket"] == "ready"
+
+
+def test_score_candidates_records_transparent_score_details(tmp_path, monkeypatch):
+    scorer = SemanticScorer(
+        ModelSettings(provider="deepseek", model="deepseek-v4-flash", api_key="x", base_url="https://example.com/v1"),
+        FileCache(str(tmp_path / "cache")),
+    )
+    segment = Segment(id=1, text="城市经济活力。", visual_type="stock_video", scene_type="b_roll")
+    candidate = MaterialCandidate(
+        id="pexels:1",
+        source_type="pexels",
+        media_type="video",
+        uri="https://example.com/clip.mp4",
+        thumbnail_url="https://example.com/thumb.jpg",
+        width=1080,
+        height=1920,
+        duration=8,
+        provider_meta={"title": "city skyline economy"},
+    )
+
+    async def fake_request_scores(self, segment, candidates):
+        return [{"id": candidates[0].id, "score": 0.72, "reason": "Good city economy fit."}]
+
+    monkeypatch.setattr(SemanticScorer, "_request_scores", fake_request_scores)
+    scored = __import__("asyncio").run(scorer.score_candidates(segment, [candidate]))
+    details = scored[0].quality_signals
+
+    assert details["score_method"] == "llm_judge"
+    assert details["score_before_adjustments"] == 0.72
+    assert details["score_after_adjustments"] == scored[0].relevance_score
+    assert details["score_breakdown"]["semantic"] == 0.72
+    assert details["technical_score"] > 0
+    assert "Good city economy fit." in details["score_notes"][0]

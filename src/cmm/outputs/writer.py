@@ -19,15 +19,18 @@ from cmm.outputs.labels import (
     source_label,
     use_status,
 )
+from cmm.outputs.html_review import build_review_html
 from cmm.outputs.report import build_report
 from cmm.utils.files import ensure_dir, write_json
 
 
 def write_match_outputs(result: MatchResult, output_dir: str) -> None:
     target = ensure_dir(output_dir)
+    manifest = _build_manifest(result)
     write_json(str(Path(target) / "analysis.json"), model_dump_compat(result.analysis))
-    write_json(str(Path(target) / "manifest.json"), _build_manifest(result))
+    write_json(str(Path(target) / "manifest.json"), manifest)
     Path(target, "summary.md").write_text(build_report(result), encoding="utf-8-sig")
+    Path(target, "review.html").write_text(build_review_html(manifest, str(target)), encoding="utf-8")
     _write_segments_overview_csv(result, Path(target) / "segments_overview.csv")
 
     segments_dir = ensure_dir(str(Path(target) / "segments"))
@@ -64,6 +67,12 @@ def _write_segments_overview_csv(result: MatchResult, path: Path) -> None:
         "external_search_links",
         "selection_tag",
         "score",
+        "semantic_score",
+        "technical_score",
+        "local_match_score",
+        "aspect_fit",
+        "score_method",
+        "score_notes",
         "candidate_bucket",
         "fallback_used",
         "shots",
@@ -104,6 +113,12 @@ def _write_segments_overview_csv(result: MatchResult, path: Path) -> None:
                     "external_search_links": " | ".join(link["url"] for link in item.external_search_links),
                     "selection_tag": selection_tag(chosen, role="chosen") if chosen else "",
                     "score": chosen.relevance_score if chosen else "",
+                    "semantic_score": _quality(chosen, "semantic_score"),
+                    "technical_score": _quality(chosen, "technical_score"),
+                    "local_match_score": _quality(chosen, "local_match_score"),
+                    "aspect_fit": _quality(chosen, "aspect_fit"),
+                    "score_method": _score_method(chosen),
+                    "score_notes": " | ".join(_score_notes(chosen)),
                     "candidate_bucket": chosen.provider_meta.get("candidate_bucket", "") if chosen else "",
                     "fallback_used": item.fallback_used,
                     "shots": " | ".join(shot.intent for shot in item.segment.shots),
@@ -163,6 +178,15 @@ def _candidate_payload(candidate, primary=None, role="chosen"):
         "source_label": source_label(candidate),
         "selection_tag": selection_tag(candidate, primary=primary, role=role),
         "score": candidate.relevance_score,
+        "score_breakdown": candidate.quality_signals.get("score_breakdown", {}),
+        "score_notes": _score_notes(candidate),
+        "score_method": _score_method(candidate),
+        "score_before_adjustments": candidate.quality_signals.get("score_before_adjustments"),
+        "score_after_adjustments": candidate.quality_signals.get("score_after_adjustments"),
+        "semantic_score": candidate.quality_signals.get("semantic_score"),
+        "technical_score": candidate.quality_signals.get("technical_score"),
+        "local_match_score": candidate.quality_signals.get("local_match_score"),
+        "aspect_fit": candidate.quality_signals.get("aspect_fit"),
         "candidate_bucket": candidate.provider_meta.get("candidate_bucket"),
         "level": candidate.match_level,
         "duration_fit": candidate.quality_signals.get("duration_fit"),
@@ -178,6 +202,29 @@ def _candidate_payload(candidate, primary=None, role="chosen"):
         "attribution_required": candidate.attribution_required,
         "source_page": candidate.source_page,
     }
+
+
+def _quality(candidate, key: str):
+    if not candidate:
+        return ""
+    return candidate.quality_signals.get(key, "")
+
+
+def _score_method(candidate) -> str:
+    if not candidate:
+        return ""
+    return str(candidate.quality_signals.get("score_method") or candidate.provider_meta.get("score_method", ""))
+
+
+def _score_notes(candidate):
+    if not candidate:
+        return []
+    notes = candidate.quality_signals.get("score_notes", [])
+    if isinstance(notes, list):
+        return [str(note) for note in notes if str(note).strip()]
+    if notes:
+        return [str(notes)]
+    return []
 
 
 def _edit_suggestion(item):

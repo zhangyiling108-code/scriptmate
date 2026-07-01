@@ -1,4 +1,4 @@
 from .matcher import LocalLibraryMatcher
-from .scanner import scan_library
+from .scanner import default_index_path, scan_library
 
-__all__ = ["LocalLibraryMatcher", "scan_library"]
+__all__ = ["LocalLibraryMatcher", "default_index_path", "scan_library"]

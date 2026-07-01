@@ -55,12 +55,24 @@ class SemanticScorer:
                 )
                 if not item:
                     continue
-                candidate.relevance_score = float(item.get("score", 0.0))
+                score_before_adjustments = float(item.get("score", 0.0))
+                candidate.relevance_score = score_before_adjustments
                 adjustment_note = self._apply_editorial_adjustments(segment, candidate)
+                score_after_adjustments = candidate.relevance_score
                 candidate.match_level = self._level_from_score(candidate.relevance_score)
                 candidate.provider_meta["candidate_bucket"] = candidate_bucket(candidate.relevance_score)
                 base_reason = str(item.get("reason", ""))
                 candidate.reason = "{0} {1}".format(base_reason, adjustment_note).strip() if adjustment_note else base_reason
+                score_method = str(item.get("score_method") or self._infer_score_method(base_reason))
+                self._record_score_details(
+                    segment=segment,
+                    candidate=candidate,
+                    method=score_method,
+                    score_before=score_before_adjustments,
+                    score_after=score_after_adjustments,
+                    base_reason=base_reason,
+                    adjustment_note=adjustment_note,
+                )
                 scored.append(candidate)
         return scored
 
@@ -75,6 +87,7 @@ class SemanticScorer:
                     "candidate_number": position,
                     "score": round(score, 2),
                     "reason": reason,
+                    "score_method": "heuristic",
                 }
             )
         return fallback_scores
@@ -149,6 +162,80 @@ class SemanticScorer:
         for item in fields:
             tokens.extend(self._tokenize_english(str(item)))
         return set(tokens)
+
+    def _record_score_details(
+        self,
+        segment: Segment,
+        candidate: MaterialCandidate,
+        method: str,
+        score_before: float,
+        score_after: float,
+        base_reason: str,
+        adjustment_note: str,
+    ) -> None:
+        existing = dict(candidate.quality_signals.get("score_breakdown", {}))
+        technical_score = self._technical_score(candidate)
+        existing.update(
+            {
+                "semantic": round(score_before, 3),
+                "technical": round(technical_score, 3),
+                "adjustment": round(score_after - score_before, 3),
+                "final": round(score_after, 3),
+            }
+        )
+        notes = []
+        if base_reason:
+            notes.append(base_reason)
+        if adjustment_note:
+            notes.append(adjustment_note)
+        if technical_score:
+            notes.append("technical fit {0:.2f}".format(technical_score))
+        candidate.quality_signals["score_breakdown"] = existing
+        candidate.quality_signals["score_notes"] = notes
+        candidate.quality_signals["score_method"] = method
+        candidate.quality_signals["score_before_adjustments"] = round(score_before, 3)
+        candidate.quality_signals["score_after_adjustments"] = round(score_after, 3)
+        candidate.quality_signals["semantic_score"] = round(score_before, 3)
+        candidate.quality_signals["technical_score"] = round(technical_score, 3)
+        candidate.quality_signals.setdefault("aspect_fit", self._aspect_fit(candidate))
+        candidate.provider_meta["score_method"] = method
+        candidate.provider_meta["score_before_adjustments"] = round(score_before, 3)
+        candidate.provider_meta["score_after_adjustments"] = round(score_after, 3)
+
+    def _technical_score(self, candidate: MaterialCandidate) -> float:
+        score = 0.0
+        if candidate.width and candidate.height:
+            longer_edge = max(candidate.width, candidate.height)
+            if longer_edge >= 2160:
+                score += 0.45
+            elif longer_edge >= 1080:
+                score += 0.35
+            elif longer_edge >= 720:
+                score += 0.2
+            if candidate.width and candidate.height:
+                score += self._aspect_fit(candidate) * 0.35
+        if candidate.duration:
+            if 4 <= candidate.duration <= 18:
+                score += 0.2
+            elif candidate.duration <= 35:
+                score += 0.1
+        return min(score, 1.0)
+
+    def _aspect_fit(self, candidate: MaterialCandidate) -> float:
+        if not candidate.width or not candidate.height:
+            return 0.0
+        if candidate.width == candidate.height:
+            return 0.75
+        if candidate.media_type == "video" and candidate.height > candidate.width:
+            return 1.0
+        if candidate.media_type == "image" and min(candidate.width, candidate.height) >= 1080:
+            return 0.8
+        return 0.55
+
+    def _infer_score_method(self, reason: str) -> str:
+        if reason.startswith("Judge unavailable"):
+            return "heuristic"
+        return "llm_judge"
 
     def _tokenize_english(self, value: str) -> List[str]:
         return [token for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", value.lower()) if token not in {"video", "photo", "footage"}]
