@@ -21,8 +21,10 @@ ScriptMate 是一个面向短视频工作流的“文案驱动高质量素材匹
 - 将文案拆成语义段落
 - 判断每段更适合什么视觉表达
 - 根据段落上下文搜索真实素材
+- 优先利用本地素材库索引匹配自有素材
 - 保持国家、叙事对象、比较关系一致
 - 每段尽量给出至少 3 条真实候选素材
+- 给出语义、技术规格、本地匹配等可复核评分细项
 - 默认不降级，除非用户显式允许
 - 默认优先给素材链接，而不是先把下载拖慢
 
@@ -33,6 +35,7 @@ ScriptMate 是一个面向短视频工作流的“文案驱动高质量素材匹
 - `analysis.json`：文案分段、角色、视觉策略
 - `manifest.json`：主选、备选、评分、来源和链接
 - `summary.md`：人工可读的匹配报告
+- `review.html`：可离线打开的静态审核页，展示缩略图、主选/备选、评分细项和来源链接
 - `segments_overview.csv`：适合批量筛选的总表
 - `segments/<id>/`：每段的详细元数据和素材记录
 
@@ -57,8 +60,29 @@ source .venv/bin/activate
 .venv/bin/scriptmate config-show --config config.toml
 .venv/bin/scriptmate analyze --file sample.txt -o ./analysis
 .venv/bin/scriptmate match --file sample.txt -o ./output --aspect 9:16 --resolution 1080
+.venv/bin/scriptmate match --file sample.txt -o ./output --aspect 9:16 --library-root ./materials --library-meta ./materials.csv
+.venv/bin/scriptmate library-index --root ./materials --metadata ./materials.csv --output ./materials/index.json
 .venv/bin/scriptmate search "economic growth" --top 5 --source all --aspect 16:9 --resolution 4K
 ```
+
+## 本地素材库与审核页
+
+本地素材库适合管理自有拍摄素材、已授权素材、常用 B-roll 和品牌素材。使用 `--library-root` 后，ScriptMate 会自动建立并复用 `.scriptmate-library-index.json` 索引，记录文件路径、标题、描述、标签、分类、宽高、时长、画幅、方向、可检索文本和 fingerprint。
+
+如果需要提前诊断素材库，可以单独运行：
+
+```bash
+.venv/bin/scriptmate library-index --root ./materials --metadata ./materials.csv
+```
+
+metadata 支持 CSV 或 JSONL，按相对路径匹配素材。CSV 示例：
+
+```csv
+path,title,description,tags,category
+city/shanghai.mp4,上海城市天际线,中国城市经济与现代化镜头,china|economy|city,city
+```
+
+匹配结果会在 `manifest.json`、`segments_overview.csv`、`summary.md` 和 `review.html` 中保留评分细项，例如 `semantic_score`、`technical_score`、`local_match_score`、`aspect_fit`、`score_method` 和 `score_notes`。`review.html` 是静态文件，可直接在浏览器中打开，用于快速复核每段文案的主选、备选、缩略图/视频预览、评分理由和来源链接。
 
 ## 配置重点
 
@@ -69,6 +93,7 @@ source .venv/bin/activate
 - `[judge]`：可选评分行为；`vision = true` 会把缩略图发给支持视觉的 judge 模型，通常会消耗更多 token
 - `[sources]`：当前内置自动搜索源，例如 `pexels`、`pixabay`、`coverr`、`nasa`
 - `[[sources.extra]]`：用于声明国内素材库、付费素材库或未来扩展源
+- `[library]`：可配置本地素材库根目录和 metadata 文件；也可通过 `--library-root`、`--library-meta` 临时覆盖
 - `[matching]`：控制候选数量、搜索深度、画幅、分辨率、评分阈值
 - 找素材时必须通过 `--aspect` 指定素材比例，支持 `9:16`、`16:9`、`4:3`、`3:4`、`1:1`
 - `[generation]`：控制生成型 fallback，但默认不自动开启
@@ -87,6 +112,8 @@ ScriptMate 更适合：
 - 上下文优先，而不是单词命中
 - 叙事正确，而不是“看起来差不多”
 - 国家、主体、比较关系一致
+- 自有素材优先通过本地索引参与匹配
+- 评分原因透明，便于人工判断是否可用
 - 输出结果便于人工快速筛选和复核
 
 ## 文档入口
@@ -102,8 +129,10 @@ ScriptMate 更适合：
 
 - 文案分段与视觉策略判断
 - Pexels + Pixabay + Coverr + NASA Images 搜索
+- 本地素材库索引、缓存与多维度匹配
+- 静态 HTML 审核页
 - 国内/付费素材库的配置声明能力
-- AI 语义评分
+- AI 语义评分与评分细项输出
 - 面向下游剪辑的素材方案包输出
 - 一键安装脚本和交互式配置流程
 
