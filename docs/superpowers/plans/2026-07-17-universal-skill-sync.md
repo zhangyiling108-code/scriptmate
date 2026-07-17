@@ -159,6 +159,8 @@ def test_skill_uses_the_generic_launcher():
     assert not (ROOT / "SKILL.md").exists()
 ```
 
+Also add `test_launcher_keeps_virtualenv_interpreter_paths_valid`. Create a temporary fake Python executable that writes its own absolute path into a fake `scriptmate` shebang, run `scripts/scriptmate.sh --help` with temporary source and cache overrides, and assert the command returns zero after environment activation. This catches launchers that create a virtual environment in one directory and then move it elsewhere.
+
 - [ ] **Step 2: Run the package tests and verify they fail**
 
 Run:
@@ -183,7 +185,7 @@ Implement `skills/scriptmate/scripts/bootstrap.sh` so that it:
 3. Uses the enclosing repository checkout when it contains pyproject.toml and src/cmm.
 4. Otherwise clones the configured repository and revision into the configured user cache.
 5. Updates an existing clean cache with fetch plus merge --ff-only; keeps the cached revision on update failure.
-6. Builds a replacement virtual environment before swapping it into place.
+6. Backs up the working environment, builds its replacement at the final path so interpreter references remain valid, and restores the backup if installation fails.
 7. Prints only the installed scriptmate executable path to stdout; sends progress to stderr.
 ```
 
@@ -213,7 +215,7 @@ bash -n skills/scriptmate/scripts/bootstrap.sh
 bash -n skills/scriptmate/scripts/scriptmate.sh
 ```
 
-Expected: validator succeeds, `3 passed`, and both shell syntax checks exit zero.
+Expected: validator succeeds, `4 passed`, and both shell syntax checks exit zero.
 
 - [ ] **Step 7: Commit the portable Skill**
 

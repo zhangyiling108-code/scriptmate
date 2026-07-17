@@ -52,7 +52,7 @@ When the Skill is executed from a full repository checkout, the scripts may use 
 ## Update and Failure Behavior
 
 - Use fast-forward-only Git updates; never rewrite a user's local repository state.
-- Preserve the last working cached runtime if a network update fails.
+- Preserve the last working cached runtime if a network update or replacement installation fails.
 - Print actionable errors for missing Python, Git, FFmpeg, repository access, dependency installation, and invalid CLI arguments.
 - Allow environment-variable overrides for the repository URL, revision, cache directory, and Python executable so forks and pinned deployments remain possible.
 
@@ -71,6 +71,6 @@ Before publishing:
 2. Scan tracked content for registry- or vendor-specific terminology.
 3. Run the Python test suite in an isolated environment.
 4. Run shell syntax checks for both Skill scripts.
-5. Exercise bootstrap and CLI help through a temporary cache.
+5. Exercise bootstrap, rollback-safe environment creation, and CLI help through temporary caches.
 6. Confirm the Skill directory stays below registry file-count and archive-size limits.
 7. Confirm the final Git diff contains no generated outputs or unrelated local files.
