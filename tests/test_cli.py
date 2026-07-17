@@ -104,8 +104,21 @@ def test_material_search_commands_require_aspect(tmp_path: Path):
 
     assert result_match.exit_code != 0
     assert result_search.exit_code != 0
-    assert "--aspect" in (result_match.stdout + result_match.stderr)
-    assert "--aspect" in (result_search.stdout + result_search.stderr)
+    assert "--aspect" in result_match.output
+    assert "--aspect" in result_search.output
+
+
+def test_library_index_command_writes_index(tmp_path: Path):
+    root = tmp_path / "library"
+    root.mkdir()
+    Image.new("RGB", (1080, 1920), color="red").save(root / "city.jpg")
+    output = tmp_path / "library-index.json"
+
+    result = runner.invoke(app, ["library-index", "--root", str(root), "--output", str(output)])
+
+    assert result.exit_code == 0
+    assert output.exists()
+    assert '"asset_count": 1' in result.stdout
 
 
 def test_library_index_command_writes_index(tmp_path: Path):
@@ -127,7 +140,7 @@ def test_aspect_validation_rejects_unsupported_ratio(tmp_path: Path):
     result = runner.invoke(app, ["search", "economic growth", "--aspect", "2:1", "--config", str(config)])
 
     assert result.exit_code != 0
-    assert "Unsupported aspect ratio" in (result.stdout + result.stderr)
+    assert "Unsupported aspect ratio" in result.output
 
 
 def test_init_command_writes_config_non_interactively(tmp_path: Path):

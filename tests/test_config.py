@@ -79,6 +79,15 @@ model = "gpt-4o-mini"
 """.strip(),
         encoding="utf-8",
     )
+    for name in (
+        "PLANNER_MODEL_API_KEY",
+        "PLANNER_MODEL_BASE_URL",
+        "JUDGE_MODEL_API_KEY",
+        "JUDGE_MODEL_BASE_URL",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "openai-test-key")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     settings = Settings.from_file(str(config_path))
