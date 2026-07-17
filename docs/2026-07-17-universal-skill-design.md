@@ -6,7 +6,7 @@ Publish the latest ScriptMate implementation from the maintained GitHub reposito
 
 ## Source of Truth
 
-- Treat `/Users/joker/Downloads/scriptmate/` as the source for the latest functional changes in this synchronization.
+- Treat the source snapshot supplied for this synchronization as the source for the latest functional changes.
 - Keep the GitHub repository root as the canonical application source.
 - Import only source code, tests, dependency metadata, and reusable runtime scripts.
 - Exclude generated outputs, local environments, caches, archives, sample runs, and process-only packaging notes.
