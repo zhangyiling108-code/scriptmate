@@ -3,22 +3,21 @@
 import asyncio
 import json
 import re
+from urllib.parse import urlsplit, urlunsplit
+import httpx
 from typing import Dict, Iterable, List
 
 from cmm.aspect import aspect_matches
 from cmm.cache import FileCache
 from cmm.config import MatchingSettings, SourcesSettings
-from cmm.fetcher.coverr import CoverrProvider
 from cmm.fetcher.fallback import FallbackManager
-from cmm.fetcher.nasa import NasaImagesProvider
-from cmm.fetcher.pexels import PexelsProvider
-from cmm.fetcher.pixabay import PixabayProvider
 from cmm.fetcher.query_planner import (
     all_shot_queries,
     candidate_matches_avoid_terms,
     provider_queries_for,
     visual_caption_for_candidate,
 )
+from cmm.fetcher.registry import build_providers
 from cmm.models import MaterialCandidate, SearchResult, Segment
 
 
@@ -28,10 +27,10 @@ class StockSearchService:
         self.matching = matching
         self.fallback_manager = fallback_manager
         self.cache = cache
-        self.pexels = PexelsProvider(sources.pexels.api_key, matching)
-        self.pixabay = PixabayProvider(sources.pixabay.api_key, matching)
-        self.coverr = CoverrProvider(sources.coverr.api_key, matching, sources.coverr.base_url)
-        self.nasa = NasaImagesProvider(matching, sources.nasa.base_url)
+        self.providers = build_providers(sources, matching)
+        self._search_limit = asyncio.Semaphore(matching.search_concurrency)
+        self._provider_limits = {name: asyncio.Semaphore(matching.provider_concurrency) for name in self.providers}
+        self.warnings: List[str] = []
 
     async def search(self, segment: Segment) -> List[MaterialCandidate]:
         if segment.visual_type in {"skip", "data_card", "text_card"}:
@@ -41,10 +40,18 @@ class StockSearchService:
         deduped = self._dedupe(raw)
         return self._apply_candidate_filters(deduped, segment)
 
-    async def search_query(self, query: str, source: str = "all", top_k: int = 5) -> SearchResult:
-        segment = Segment(id=1, text=query, search_queries=[query], keywords_en=[query])
+    async def search_query(self, query: str, source: str = "all", top_k: int = 5, media_type: str = "video") -> SearchResult:
+        if source != "all" and source not in self.providers:
+            raise ValueError("Unknown source: " + source)
+        if source != "all" and source not in self.sources.enabled:
+            self.warnings.append(source + ": source is disabled; add it to sources.enabled")
+        if media_type not in {"image", "video"}:
+            raise ValueError("media_type must be image or video")
+        if source != "all" and media_type not in self.providers[source].media_types:
+            self.warnings.append(source + ": does not support " + media_type + " search")
+        segment = Segment(id=1, text=query, visual_type="stock_" + media_type, search_queries=[query], keywords_en=[query])
         candidates = await self._search_queries([query], segment, source=source)
-        return SearchResult(query=query, source=source, candidates=self._apply_quality_filters(self._dedupe(candidates))[:top_k])
+        return SearchResult(query=query, source=source, candidates=self._apply_quality_filters(self._dedupe(candidates))[:top_k], warnings=list(self.warnings))
 
     def mapped_queries(self, segment: Segment) -> List[str]:
         return self.fallback_manager.mapped_queries(segment)
@@ -54,25 +61,19 @@ class StockSearchService:
 
     async def _search_queries(self, queries: Iterable[str], segment: Segment, source: str = "all") -> List[MaterialCandidate]:
         tasks = []
-        base_queries = self._normalize_queries(self._expand_queries(list(queries), segment))
-        provider_query_map = {
-            "pexels": self._normalize_queries(base_queries + provider_queries_for(segment, "pexels")),
-            "pixabay": self._normalize_queries(base_queries + provider_queries_for(segment, "pixabay")),
-            "coverr": self._normalize_queries(base_queries + provider_queries_for(segment, "coverr")),
-            "nasa": self._normalize_queries(base_queries + provider_queries_for(segment, "nasa")),
-        }
-        for query in provider_query_map["pexels"]:
-            if source in {"all", "pexels"} and "pexels" in self.sources.enabled:
-                tasks.append(self._cached_provider_search("pexels", query, segment))
-        for query in provider_query_map["pixabay"]:
-            if source in {"all", "pixabay"} and "pixabay" in self.sources.enabled:
-                tasks.append(self._cached_provider_search("pixabay", query, segment))
-        for query in provider_query_map["coverr"]:
-            if source in {"all", "coverr"} and "coverr" in self.sources.enabled:
-                tasks.append(self._cached_provider_search("coverr", query, segment))
-        for query in provider_query_map["nasa"]:
-            if source in {"all", "nasa"} and "nasa" in self.sources.enabled:
-                tasks.append(self._cached_provider_search("nasa", query, segment))
+        media_type = "image" if segment.visual_type == "stock_image" else "video"
+        for name in self.sources.enabled:
+            provider = self.providers[name]
+            if source not in {"all", name} or media_type not in provider.media_types:
+                continue
+            base_queries = self._expand_queries(list(queries), segment)
+            if provider.supports_cjk:
+                base_queries = self._original_queries(segment) + base_queries
+            provider_queries = self._normalize_queries(
+                provider_queries_for(segment, name) + base_queries, allow_cjk=provider.supports_cjk,
+            )
+            for query in provider_queries:
+                tasks.append(self._guarded_search(name, query, segment))
         if not tasks:
             return []
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -82,6 +83,29 @@ class StockSearchService:
                 continue
             merged.extend(result)
         return merged
+
+    async def _guarded_search(self, provider, query, segment):
+        try:
+            async with self._provider_limits[provider], self._search_limit:
+                return await asyncio.wait_for(
+                    self._cached_provider_search(provider, query, segment), timeout=self.matching.search_timeout_seconds,
+                )
+        except Exception as exc:
+            if isinstance(exc, httpx.HTTPStatusError):
+                reason = "HTTP " + str(exc.response.status_code)
+            elif isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException)):
+                reason = "request timed out"
+            else:
+                reason = type(exc).__name__
+            # Do not log exception URLs: query strings may contain provider credentials.
+            warning = provider + ": search failed (" + reason + ")"
+            if warning not in self.warnings:
+                self.warnings.append(warning)
+            return []
+
+    @staticmethod
+    def _original_queries(segment):
+        return list(segment.search_queries) + list(segment.keywords_cn) + [segment.narrative_subject]
 
     async def _cached_provider_search(self, provider: str, query: str, segment: Segment) -> List[MaterialCandidate]:
         cache_key = json.dumps(
@@ -94,34 +118,35 @@ class StockSearchService:
                 "video_orientation": self.matching.video_orientation,
                 "video_min_resolution": self.matching.video_min_resolution,
                 "search_pool_size": self.matching.search_pool_size,
+                "version": 2,
+                "base_url": getattr(self.sources, provider).base_url,
+                "allowed_licenses": getattr(getattr(self.sources, provider), "allowed_licenses", []),
             },
             ensure_ascii=False,
             sort_keys=True,
         )
-        cached = self.cache.load_json("search", cache_key)
+        cached = self.cache.load_json("search", cache_key, max_age_seconds=self.matching.search_cache_ttl_seconds)
         if cached is not None:
             return [MaterialCandidate(**item) for item in cached]
-        if provider == "pexels":
-            result = await self.pexels.search(segment, query)
-        elif provider == "pixabay":
-            result = await self.pixabay.search(segment, query)
-        elif provider == "coverr":
-            result = await self.coverr.search(segment, query)
-        elif provider == "nasa":
-            result = await self.nasa.search(segment, query)
-        else:
-            result = []
+        implementation = self.providers[provider]
+        if hasattr(implementation, "api_key") and not implementation.api_key:
+            warning = provider + ": API key is not configured"
+            if warning not in self.warnings:
+                self.warnings.append(warning)
+        result = await implementation.search(segment, query)
+        if not result and hasattr(implementation, "api_key") and not implementation.api_key:
+            return []
         self.cache.save_json("search", cache_key, [item.model_dump() for item in result])
         return result
 
-    def _normalize_queries(self, queries: List[str]) -> List[str]:
+    def _normalize_queries(self, queries: List[str], allow_cjk: bool = False) -> List[str]:
         deduped: List[str] = []
         seen = set()
         for query in queries:
             normalized = " ".join(str(query).split()).strip()
             if not normalized:
                 continue
-            if _contains_cjk(normalized) or not re.search(r"[A-Za-z]", normalized):
+            if not allow_cjk and (_contains_cjk(normalized) or not re.search(r"[A-Za-z]", normalized)):
                 continue
             lowered = normalized.lower()
             if lowered in seen:
@@ -248,10 +273,14 @@ class StockSearchService:
         seen = set()
         deduped = []
         for candidate in candidates:
-            key = candidate.uri
-            if key in seen:
+            parts = urlsplit(candidate.source_page or candidate.uri)
+            # Original landing pages collapse cross-provider aggregations of the same work.
+            key = urlunsplit(("https", parts.netloc.lower(), parts.path.rstrip("/"), parts.query, "")) if parts.netloc else candidate.uri
+            uri_key = candidate.uri
+            if key in seen or uri_key in seen:
                 continue
             seen.add(key)
+            seen.add(uri_key)
             deduped.append(candidate)
         return deduped
 
@@ -288,7 +317,7 @@ class StockSearchService:
                     candidate.reason,
                     " ".join(candidate.tags),
                     str(candidate.provider_meta.get("title", "")),
-                    str(candidate.provider_meta.get("query", "")),
+                    str(candidate.provider_meta.get("description", "")),
                 ]
             )
             candidate.provider_meta["visual_caption"] = visual_caption_for_candidate(

@@ -67,6 +67,14 @@ class LibraryAsset(BaseModel):
     fingerprint: str = ""
     metadata_complete: bool = False
     warnings: List[str] = Field(default_factory=list)
+    license_type: str = "unknown"
+    license_url: str = ""
+    license_version: str = ""
+    creator: str = ""
+    creator_url: str = ""
+    attribution: str = ""
+    source_page: str = ""
+    attribution_required: bool = False
 
 
 class MaterialCandidate(BaseModel):
@@ -82,6 +90,11 @@ class MaterialCandidate(BaseModel):
     reason: str = ""
     license_type: str = ""
     attribution_required: bool = False
+    license_url: str = ""
+    license_version: str = ""
+    creator: str = ""
+    creator_url: str = ""
+    attribution: str = ""
     duration: Optional[float] = None
     width: Optional[int] = None
     height: Optional[int] = None
@@ -145,6 +158,7 @@ class SearchResult(BaseModel):
     query: str
     source: str
     candidates: List[MaterialCandidate] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
 
 
 class DraftResult(BaseModel):

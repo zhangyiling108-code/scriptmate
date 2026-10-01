@@ -14,11 +14,33 @@ class ModelSettings(BaseModel):
     base_url: str = "https://api.deepseek.com"
     timeout_seconds: float = 30.0
     max_retries: int = 1
+    # None keeps compatibility with existing configs; explicitly set this for new endpoints.
+    supports_vision: Optional[bool] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _typesafe_defaults(cls, data):
+        if isinstance(data, dict) and str(data.get("provider", "")).lower() == "typesafe":
+            data = dict(data)
+            data.setdefault("model", "jev-latest")
+            data.setdefault("base_url", "https://api.typesafe.ai")
+            data.setdefault("supports_vision", False)
+        return data
+
+    @model_validator(mode="after")
+    def _typesafe_capabilities(self):
+        if self.provider.lower() == "typesafe" and self.supports_vision:
+            raise ValueError("Typesafe System One currently supports metadata judging, not image input.")
+        return self
 
 
 class SourceApiSettings(BaseModel):
     api_key: str = ""
     base_url: str = ""
+
+
+class OpenSourceSettings(SourceApiSettings):
+    allowed_licenses: List[str] = Field(default_factory=lambda: ["cc0", "pdm", "by"])
 
 
 class ExternalSourceSettings(BaseModel):
@@ -41,6 +63,8 @@ class SourcesSettings(BaseModel):
     pixabay: SourceApiSettings = SourceApiSettings()
     coverr: SourceApiSettings = SourceApiSettings()
     nasa: SourceApiSettings = SourceApiSettings(base_url="https://images-api.nasa.gov")
+    openverse: OpenSourceSettings = OpenSourceSettings(base_url="https://api.openverse.org/v1")
+    commons: OpenSourceSettings = OpenSourceSettings(base_url="https://commons.wikimedia.org/w/api.php")
     extra: List[ExternalSourceSettings] = Field(default_factory=list)
 
     def configured_external_sources(self) -> List[ExternalSourceSettings]:
@@ -55,6 +79,10 @@ class MatchingSettings(BaseModel):
     video_min_resolution: int = 1080
     target_aspect: str = "9:16"
     video_orientation: str = "vertical"
+    search_concurrency: int = Field(default=4, ge=1, le=32)
+    provider_concurrency: int = Field(default=2, ge=1, le=8)
+    search_timeout_seconds: float = Field(default=90.0, gt=0)
+    search_cache_ttl_seconds: float = Field(default=86400.0, ge=0)
 
     @model_validator(mode="before")
     @classmethod
@@ -105,6 +133,8 @@ class CapCutSettings(BaseModel):
 
 class JudgeSettings(BaseModel):
     vision: bool = False
+    concurrency: int = Field(default=2, ge=1, le=16)
+    cache_ttl_seconds: float = Field(default=604800.0, ge=0)
 
 
 class DowngradeSettings(BaseModel):
@@ -155,17 +185,7 @@ class Settings(BaseSettings):
                     "max_retries": "PLANNER_MODEL_MAX_RETRIES",
                 },
             ),
-            "judge_model": _merge_env_overrides(
-                data.get("judge_model", legacy_llm),
-                {
-                    "provider": "JUDGE_MODEL_PROVIDER",
-                    "model": ["JUDGE_MODEL_NAME", "JUDGE_MODEL"],
-                    "api_key": ["JUDGE_MODEL_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"],
-                    "base_url": ["JUDGE_MODEL_BASE_URL", "DEEPSEEK_BASE_URL", "OPENAI_BASE_URL"],
-                    "timeout_seconds": "JUDGE_MODEL_TIMEOUT_SECONDS",
-                    "max_retries": "JUDGE_MODEL_MAX_RETRIES",
-                },
-            ),
+            "judge_model": _load_judge_model(data.get("judge_model", legacy_llm)),
             "sources": {
                 "enabled": data.get("sources", {}).get("enabled", ["pexels", "pixabay"]),
                 "pexels": _merge_env_overrides(
@@ -183,6 +203,14 @@ class Settings(BaseSettings):
                 "nasa": _merge_env_overrides(
                     data.get("sources", {}).get("nasa", legacy_stock.get("nasa", {})),
                     {"api_key": "NASA_IMAGES_API_KEY", "base_url": "NASA_IMAGES_BASE_URL"},
+                ),
+                "openverse": _merge_env_overrides(
+                    data.get("sources", {}).get("openverse", {}),
+                    {"api_key": "OPENVERSE_API_TOKEN", "base_url": "OPENVERSE_BASE_URL"},
+                ),
+                "commons": _merge_env_overrides(
+                    data.get("sources", {}).get("commons", {}),
+                    {"base_url": "COMMONS_BASE_URL"},
                 ),
                 "extra": _load_external_sources(data.get("sources", {}).get("extra", [])),
             },
@@ -233,6 +261,23 @@ def _load_toml(path: Path):
     except ModuleNotFoundError:  # pragma: no cover
         import tomli as tomllib  # type: ignore
     return tomllib.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def _load_judge_model(payload):
+    import os
+
+    provider = os.getenv("JUDGE_MODEL_PROVIDER") or payload.get("provider", "deepseek")
+    typesafe = provider.lower() == "typesafe"
+    return _merge_env_overrides(payload, {
+        "provider": "JUDGE_MODEL_PROVIDER",
+        "model": ["JUDGE_MODEL_NAME", "JUDGE_MODEL"] + (["TYPESAFE_DEFAULT_MODEL"] if typesafe else []),
+        # Never send another provider's fallback key to Typesafe.
+        "api_key": ["JUDGE_MODEL_API_KEY"] + (["TYPESAFE_API_KEY"] if typesafe else ["DEEPSEEK_API_KEY", "OPENAI_API_KEY"]),
+        "base_url": ["JUDGE_MODEL_BASE_URL"] + (["TYPESAFE_BASE_URL"] if typesafe else ["DEEPSEEK_BASE_URL", "OPENAI_BASE_URL"]),
+        "timeout_seconds": "JUDGE_MODEL_TIMEOUT_SECONDS",
+        "max_retries": "JUDGE_MODEL_MAX_RETRIES",
+        "supports_vision": "JUDGE_MODEL_SUPPORTS_VISION",
+    })
 
 
 def _merge_env_overrides(payload, env_map):

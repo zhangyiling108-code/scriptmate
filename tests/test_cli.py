@@ -10,6 +10,12 @@ from cmm.models import AnalysisResult, MatchResult, MatchSummary, SearchResult, 
 runner = CliRunner()
 
 
+def test_version_works_without_a_subcommand():
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert "ScriptMate CLI 0.1.0" in result.stdout
+
+
 def _write_realish_config(tmp_path: Path) -> Path:
     config = tmp_path / "config.toml"
     config.write_text(
@@ -50,9 +56,10 @@ def test_search_command_outputs_json(tmp_path: Path, monkeypatch):
     config = _write_realish_config(tmp_path)
     captured = {}
 
-    async def fake_search_single_query(query, settings, cache, data_dir, source="all", top_k=5, aspect="9:16", resolution="1080"):
+    async def fake_search_single_query(query, settings, cache, data_dir, source="all", top_k=5, aspect="9:16", resolution="1080", media_type="video"):
         captured["aspect"] = aspect
         captured["resolution"] = resolution
+        captured["media_type"] = media_type
         return SearchResult(query=query, source=source, candidates=[])
 
     monkeypatch.setattr("cmm.cli.search_single_query", fake_search_single_query)
@@ -61,6 +68,7 @@ def test_search_command_outputs_json(tmp_path: Path, monkeypatch):
     assert (tmp_path / "out" / "search.json").exists()
     assert captured["aspect"] == "16:9"
     assert captured["resolution"] == "4K"
+    assert captured["media_type"] == "video"
 
 
 def test_match_command_requires_input():

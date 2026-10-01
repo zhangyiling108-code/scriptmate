@@ -127,6 +127,7 @@ def _build_asset(file_path: Path, root_path: Path, item: Dict[str, object], fing
         fingerprint=fingerprint,
         metadata_complete=metadata_complete,
         warnings=warnings,
+        **_rights_metadata(item),
     )
 
 
@@ -145,13 +146,23 @@ def _merge_metadata(asset: LibraryAsset, item: Dict[str, object], file_path: Pat
             "category": category,
             "searchable_text": _searchable_text(file_path, title, description, tags, category),
             "metadata_complete": bool(title and (description or tags or category)),
+            **_rights_metadata(item),
         }
     )
 
 
+def _rights_metadata(item):
+    fields = {key: str(item.get(key) or "") for key in (
+        "license_url", "license_version", "creator", "creator_url", "attribution", "source_page",
+    )}
+    fields["license_type"] = str(item.get("license_type") or "unknown")
+    fields["attribution_required"] = str(item.get("attribution_required", "")).lower() in {"true", "1", "yes"} or fields["license_type"].lower().startswith(("by", "cc by"))
+    return fields
+
+
 def _fingerprint(path: Path) -> str:
     stat = path.stat()
-    return "{0}:{1}:{2}".format(path.as_posix(), stat.st_size, int(stat.st_mtime))
+    return "{0}:{1}:{2}".format(path.as_posix(), stat.st_size, stat.st_mtime_ns)
 
 
 def _title_from_path(path: Path) -> str:

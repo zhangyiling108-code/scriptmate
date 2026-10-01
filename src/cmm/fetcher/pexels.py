@@ -18,6 +18,8 @@ class PexelsProvider(BaseStockProvider):
     async def search(self, segment: Segment, query: str) -> List[MaterialCandidate]:
         if not self.api_key:
             return []
+        if segment.visual_type == "stock_image":
+            return await self._search_images(query)
 
         async def _request():
             async with build_async_client() as client:
@@ -55,7 +57,10 @@ class PexelsProvider(BaseStockProvider):
                     duration=duration,
                     width=best.get("width"),
                     height=best.get("height"),
-                    tags=[query],
+                    tags=[],
+                    license_url="https://www.pexels.com/license/",
+                    creator=item.get("user", {}).get("name", ""),
+                    creator_url=item.get("user", {}).get("url", ""),
                     quality_signals={
                         "hd": (best.get("height") or 0) >= 1080,
                         "orientation": "vertical" if (best.get("height") or 0) >= (best.get("width") or 0) else "horizontal",
@@ -79,6 +84,33 @@ class PexelsProvider(BaseStockProvider):
                 (item.width or 0) * (item.height or 0),
             ),
         )
+
+    async def _search_images(self, query: str) -> List[MaterialCandidate]:
+        async def request():
+            async with build_async_client() as client:
+                response = await client.get(
+                    "https://api.pexels.com/v1/search", headers={"Authorization": self.api_key},
+                    params={"query": query, "per_page": _provider_page_size(self.matching)},
+                )
+                response.raise_for_status()
+                return response.json()
+
+        payload = await with_retry(request)
+        results = []
+        for item in payload.get("photos", []):
+            images = item.get("src", {})
+            uri = images.get("original")
+            if not uri:
+                continue
+            results.append(MaterialCandidate(
+                id="pexels-image:" + str(item["id"]), source_type="pexels", media_type="image", uri=uri,
+                thumbnail_url=images.get("medium") or uri, preview_uri=images.get("large") or uri,
+                source_page=item.get("url", ""), width=item.get("width"), height=item.get("height"),
+                license_type="pexels", license_url="https://www.pexels.com/license/",
+                creator=item.get("photographer", ""), creator_url=item.get("photographer_url", ""),
+                provider_meta={"query": query, "title": item.get("alt", "")},
+            ))
+        return results
 
 
 def _select_video_file(files, matching: MatchingSettings):

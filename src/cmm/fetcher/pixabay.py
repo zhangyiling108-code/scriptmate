@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import List
 
 from cmm.aspect import aspect_fit, aspect_matches
@@ -19,16 +18,9 @@ class PixabayProvider(BaseStockProvider):
     async def search(self, segment: Segment, query: str) -> List[MaterialCandidate]:
         if not self.api_key:
             return []
-        tasks = [self._search_videos(query, segment)]
-        if segment.scene_type == "infographic":
-            tasks.append(self._search_images(query))
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        merged: List[MaterialCandidate] = []
-        for result in results:
-            if isinstance(result, Exception):
-                continue
-            merged.extend(result)
-        return merged
+        if segment.visual_type == "stock_image":
+            return await self._search_images(query)
+        return await self._search_videos(query, segment)
 
     async def _search_videos(self, query: str, segment: Segment) -> List[MaterialCandidate]:
         async def _request():
@@ -65,7 +57,9 @@ class PixabayProvider(BaseStockProvider):
                     duration=duration,
                     width=best.get("width"),
                     height=best.get("height"),
-                    tags=[query],
+                    tags=[tag.strip() for tag in item.get("tags", "").split(",") if tag.strip()],
+                    creator=item.get("user", ""),
+                    license_url="https://pixabay.com/service/license-summary/",
                     quality_signals={
                         "hd": (best.get("height") or 0) >= 1080,
                         "orientation": "vertical" if (best.get("height") or 0) >= (best.get("width") or 0) else "horizontal",
@@ -117,7 +111,9 @@ class PixabayProvider(BaseStockProvider):
                     attribution_required=False,
                     width=item.get("imageWidth"),
                     height=item.get("imageHeight"),
-                    tags=[query],
+                    tags=[tag.strip() for tag in item.get("tags", "").split(",") if tag.strip()],
+                    creator=item.get("user", ""),
+                    license_url="https://pixabay.com/service/license-summary/",
                     quality_signals={
                         "hd": (item.get("imageHeight") or 0) >= 1080,
                         "orientation": "vertical" if (item.get("imageHeight") or 0) >= (item.get("imageWidth") or 0) else "horizontal",

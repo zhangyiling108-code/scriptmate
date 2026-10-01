@@ -40,6 +40,7 @@ async def search_single_query(
     top_k: int = 5,
     aspect: str = "9:16",
     resolution: str = "1080",
+    media_type: str = "video",
 ) -> SearchResult:
     effective_matching = _matching_for_run(settings.matching, aspect, resolution)
     fallback_manager = FallbackManager(
@@ -47,7 +48,7 @@ async def search_single_query(
         generic_dir=str(Path(data_dir) / "generic_footage"),
     )
     service = StockSearchService(settings.sources, effective_matching, fallback_manager, cache)
-    return await service.search_query(query, source=source, top_k=top_k)
+    return await service.search_query(query, source=source, top_k=top_k, media_type=media_type)
 
 
 async def match_script(
@@ -107,6 +108,8 @@ async def match_script(
         cache,
         allow_fallback=settings.downgrade.judge_fallback,
         allow_vision=settings.judge.vision,
+        concurrency=settings.judge.concurrency,
+        cache_ttl_seconds=settings.judge.cache_ttl_seconds,
     )
     chart_renderer = ChartRenderer(settings.cards, settings.generation)
     ranker = Ranker()
@@ -136,6 +139,7 @@ async def match_script(
             target_aspect=effective_matching.target_aspect,
         )
         if local_candidates:
+            local_candidates = await scorer.score_candidates(segment, local_candidates)
             segment_candidates.extend(local_candidates)
 
         if segment.visual_type in {"stock_video", "stock_image"}:
@@ -280,7 +284,7 @@ async def match_script(
         output_dir=str(output_dir),
         downloads=downloads,
         errors=errors,
-        warnings=warnings,
+        warnings=list(dict.fromkeys(warnings + stock_search.warnings)),
         cache_hits={},
     )
     write_match_outputs(result, str(output_dir))

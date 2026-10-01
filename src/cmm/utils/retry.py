@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import random
+import httpx
 from typing import Awaitable, Callable, TypeVar
 
 
@@ -18,7 +20,15 @@ async def with_retry(
             return await func()
         except Exception as exc:  # pragma: no cover - simple shared helper
             last_error = exc
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code not in {408, 429, 500, 502, 503, 504}:
+                raise
             if attempt >= retries:
                 raise
-            await asyncio.sleep(delay)
+            retry_delay = delay * (2 ** attempt) + random.uniform(0, delay * 0.25)
+            if isinstance(exc, httpx.HTTPStatusError):
+                try:
+                    retry_delay = max(retry_delay, min(float(exc.response.headers.get("Retry-After", "0")), 30.0))
+                except ValueError:
+                    pass
+            await asyncio.sleep(retry_delay)
     raise last_error  # type: ignore[misc]

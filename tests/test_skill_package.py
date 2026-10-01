@@ -62,6 +62,11 @@ if [ "${1:-}" = "-m" ] && [ "${2:-}" = "pip" ]; then
   chmod 755 "$runner"
   exit 0
 fi
+if [ -f "${1:-}" ]; then
+  script="$1"
+  shift
+  exec sh "$script" "$@"
+fi
 exit 1
 """,
         encoding="utf-8",
@@ -91,3 +96,6 @@ exit 1
 
     assert result.returncode == 0, result.stderr
     assert "fake ScriptMate help" in result.stdout
+    runner = tmp_path / "cache" / "venv" / "bin" / "scriptmate"
+    assert runner.read_text().splitlines()[0] == "#!" + str(tmp_path / "cache" / "venv" / "bin" / "python")
+    assert (tmp_path / "cache" / "venv" / "bin" / "python").is_file()

@@ -1,0 +1,23 @@
+# Inject TYPESAFE_API_KEY and DEEPSEEK_API_KEY through your environment.
+# This file contains no credentials. Use --config config.typesafe.example.toml.
+[planner_model]
+provider = "deepseek"
+model = "deepseek-v4-flash"
+base_url = "https://api.deepseek.com"
+
+[judge_model]
+provider = "typesafe"
+model = "jev-latest"
+base_url = "https://api.typesafe.ai"
+supports_vision = false
+timeout_seconds = 30
+max_retries = 1
+
+[judge]
+vision = false
+concurrency = 2
+# jev-latest is a moving alias; set zero to refresh scores on every run.
+cache_ttl_seconds = 604800
+
+[sources]
+enabled = ["pexels", "pixabay", "coverr", "nasa", "openverse", "commons"]

@@ -65,6 +65,8 @@ ScriptMate CLI reads `config.toml` from the project root, or a custom file passe
 - If `PLANNER_MODEL_BASE_URL` / `JUDGE_MODEL_BASE_URL` are not set, the loader will also accept `DEEPSEEK_BASE_URL`, then `OPENAI_BASE_URL`.
 - To enable a vision-capable judge, set `[judge].vision = true`, use `SCRIPTMATE_JUDGE_VISION=true`, or pass `--judge-vision` to `scriptmate match`. This is opt-in because thumbnail image input usually costs more tokens.
 - Built-in V1 search providers are `pexels`, `pixabay`, `coverr`, and `nasa`.
+- Additional image providers: `openverse` and `commons`. See [open media configuration](open-media.md) for licenses, credentials, vision capabilities, and concurrency settings.
+- TypeSafe JEV judging uses its native `/v1/systemone` score protocol, not chat completions. Use `config.typesafe.example.toml` and securely inject `TYPESAFE_API_KEY`. It evaluates metadata; vision mode is unsupported. See [JEV setup](open-media.md#typesafe-jev) for scores, confidence, and cache behavior.
 - `match` and `search` require `--aspect` so the material package does not mix incompatible ratios. Supported values: `9:16`, `16:9`, `4:3`, `3:4`, `1:1`.
 - `matching.search_pool_size` controls how many raw candidates each provider fetches before AI scoring and ranking. The shortlist can stay at 3 while the search pool is larger.
 - Use `[[sources.extra]]` to declare additional domestic or paid libraries you want to route or integrate later.

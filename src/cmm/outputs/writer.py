@@ -31,12 +31,33 @@ def write_match_outputs(result: MatchResult, output_dir: str) -> None:
     write_json(str(Path(target) / "manifest.json"), manifest)
     Path(target, "summary.md").write_text(build_report(result), encoding="utf-8-sig")
     Path(target, "review.html").write_text(build_review_html(manifest, str(target)), encoding="utf-8")
+    _write_attributions(result, Path(target) / "attributions.md")
     _write_segments_overview_csv(result, Path(target) / "segments_overview.csv")
 
     segments_dir = ensure_dir(str(Path(target) / "segments"))
     for item in result.segments:
         segment_dir = ensure_dir(str(Path(segments_dir) / "{0:03d}".format(item.segment.id)))
         write_json(str(Path(segment_dir) / "segment.json"), model_dump_compat(item))
+
+
+def _write_attributions(result: MatchResult, path: Path) -> None:
+    lines = ["# 素材署名与许可", "", "包含主选与备选；最终只保留实际使用素材的署名。", ""]
+    seen = set()
+    for item in result.segments:
+        for candidate in [item.chosen, *item.alternatives]:
+            if candidate is None or candidate.uri in seen:
+                continue
+            seen.add(candidate.uri)
+            lines.extend([
+                "## " + candidate.id, "",
+                "- 来源：" + (candidate.source_page or candidate.uri),
+                "- 作者：" + (candidate.creator or "未提供"),
+                "- 许可：" + (candidate.license_type or "unknown") + " " + candidate.license_version,
+                "- 许可链接：" + (candidate.license_url or "未提供"),
+                "- 署名要求：" + ("需要" if candidate.attribution_required else "未要求／请核对许可"),
+                "- 署名文本：" + (candidate.attribution or "未提供"), "",
+            ])
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _write_segments_overview_csv(result: MatchResult, path: Path) -> None:
@@ -135,6 +156,8 @@ def _build_manifest(result: MatchResult):
         "created_at": result.created_at,
         "total_segments": result.total_segments,
         "match_summary": model_dump_compat(result.match_summary),
+        "warnings": result.warnings,
+        "errors": result.errors,
         "segments": [
             {
                 "id": item.segment.id,
@@ -186,6 +209,7 @@ def _candidate_payload(candidate, primary=None, role="chosen"):
         "semantic_score": candidate.quality_signals.get("semantic_score"),
         "technical_score": candidate.quality_signals.get("technical_score"),
         "local_match_score": candidate.quality_signals.get("local_match_score"),
+        "judge_details": candidate.quality_signals.get("judge_details"),
         "aspect_fit": candidate.quality_signals.get("aspect_fit"),
         "candidate_bucket": candidate.provider_meta.get("candidate_bucket"),
         "level": candidate.match_level,
@@ -200,6 +224,11 @@ def _candidate_payload(candidate, primary=None, role="chosen"):
         "chart_kind": candidate.provider_meta.get("chart_kind"),
         "license_type": candidate.license_type,
         "attribution_required": candidate.attribution_required,
+        "license_url": candidate.license_url,
+        "license_version": candidate.license_version,
+        "creator": candidate.creator,
+        "creator_url": candidate.creator_url,
+        "attribution": candidate.attribution,
         "source_page": candidate.source_page,
     }
 

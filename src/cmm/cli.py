@@ -91,7 +91,7 @@ timeout_seconds = 30
 max_retries = 1
 
 [sources]
-enabled = ["pexels", "pixabay", "coverr", "nasa"]
+enabled = ["pexels", "pixabay", "coverr", "nasa", "openverse", "commons"]
 
 [sources.pexels]
 api_key = "{pexels_api_key}"
@@ -108,6 +108,14 @@ base_url = "https://api.coverr.co"
 [sources.nasa]
 api_key = ""
 base_url = "https://images-api.nasa.gov"
+
+[sources.openverse]
+base_url = "https://api.openverse.org/v1"
+allowed_licenses = ["cc0", "pdm", "by"]
+
+[sources.commons]
+base_url = "https://commons.wikimedia.org/w/api.php"
+allowed_licenses = ["cc0", "pdm", "by"]
 
 [matching]
 top_results = 3
@@ -161,7 +169,7 @@ vision = false
 
 def _build_doctor_payload(settings: Settings, config_file: Optional[Path]) -> dict:
     planner_key = _resolve_api_key(settings.planner_model.api_key, ["PLANNER_MODEL_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"])
-    judge_key = _resolve_api_key(settings.judge_model.api_key, ["JUDGE_MODEL_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"])
+    judge_key = settings.judge_model.api_key
     pexels_key = _resolve_api_key(settings.sources.pexels.api_key, ["PEXELS_API_KEY"])
     pixabay_key = _resolve_api_key(settings.sources.pixabay.api_key, ["PIXABAY_API_KEY"])
     coverr_key = _resolve_api_key(settings.sources.coverr.api_key, ["COVERR_API_KEY"])
@@ -188,6 +196,7 @@ def _build_doctor_payload(settings: Settings, config_file: Optional[Path]) -> di
             "base_url": settings.judge_model.base_url,
             "api_key_configured": bool(judge_key),
             "vision_enabled": settings.judge.vision,
+            "supports_vision": settings.judge_model.supports_vision,
         },
         "sources": {
             "enabled": settings.sources.enabled,
@@ -195,6 +204,9 @@ def _build_doctor_payload(settings: Settings, config_file: Optional[Path]) -> di
             "pixabay_api_key_configured": bool(pixabay_key),
             "coverr_api_key_configured": bool(coverr_key),
             "nasa_configured": "nasa" in settings.sources.enabled,
+            "openverse_token_configured": bool(settings.sources.openverse.api_key),
+            "openverse_allowed_licenses": settings.sources.openverse.allowed_licenses,
+            "commons_allowed_licenses": settings.sources.commons.allowed_licenses,
             "extra_sources": [item.name for item in settings.sources.configured_external_sources()],
         },
         "matching": {
@@ -210,7 +222,7 @@ def _build_doctor_payload(settings: Settings, config_file: Optional[Path]) -> di
     }
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(
     version: bool = typer.Option(False, "--version", help="Show ScriptMate CLI version and exit."),
 ):
@@ -322,7 +334,7 @@ def config_show(
             "provider": settings.judge_model.provider,
             "model": settings.judge_model.model,
             "base_url": settings.judge_model.base_url,
-            "api_key": _mask(_resolve_api_key(settings.judge_model.api_key, ["JUDGE_MODEL_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"])),
+            "api_key": _mask(settings.judge_model.api_key),
             "vision_enabled": settings.judge.vision,
         },
         "sources": {
@@ -453,7 +465,8 @@ def analyze(
 def search(
     query: str = typer.Argument(..., help="Search query for a single material probe."),
     top: int = typer.Option(5, "--top", help="How many candidates to return."),
-    source: str = typer.Option("all", "--source", help="Material provider: all, pexels, pixabay, coverr, or nasa."),
+    source: str = typer.Option("all", "--source", help="Material provider: all, pexels, pixabay, coverr, nasa, openverse, or commons."),
+    media_type: str = typer.Option("video", "--media-type", help="Media to search: video or image."),
     aspect: str = typer.Option(
         ...,
         "--aspect",
@@ -466,6 +479,11 @@ def search(
 ):
     configure_logging(verbose)
     aspect = _validate_aspect(aspect)
+    from cmm.fetcher.registry import PROVIDER_FACTORIES
+    if source not in {"all", *PROVIDER_FACTORIES}:
+        raise typer.BadParameter("Unknown material source: " + source)
+    if media_type not in {"image", "video"}:
+        raise typer.BadParameter("--media-type must be image or video")
     settings = Settings.from_file(str(config_file) if config_file else None)
     cache_root = settings.output.cache_dir or str((output_dir or Path.cwd()) / "cache")
     cache = FileCache(cache_root)
@@ -480,6 +498,7 @@ def search(
             top_k=top,
             aspect=aspect,
             resolution=resolution,
+            media_type=media_type,
         )
     )
     payload = model_dump_compat(result)

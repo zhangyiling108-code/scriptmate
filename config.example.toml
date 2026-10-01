@@ -15,7 +15,7 @@ timeout_seconds = 30
 max_retries = 1
 
 [sources]
-enabled = ["pexels", "pixabay", "coverr", "nasa"]
+enabled = ["pexels", "pixabay", "coverr", "nasa", "openverse", "commons"]
 
 [sources.pexels]
 api_key = ""
@@ -32,6 +32,15 @@ base_url = "https://api.coverr.co"
 [sources.nasa]
 api_key = ""
 base_url = "https://images-api.nasa.gov"
+
+[sources.openverse]
+api_key = "" # Optional bearer token; anonymous requests are supported with lower quotas.
+base_url = "https://api.openverse.org/v1"
+allowed_licenses = ["cc0", "pdm", "by"]
+
+[sources.commons]
+base_url = "https://commons.wikimedia.org/w/api.php"
+allowed_licenses = ["cc0", "pdm", "by"] # Add by-sa only when appropriate for your output.
 
 [[sources.extra]]
 name = "vjshi"
@@ -93,6 +102,10 @@ strong_score = 0.70
 video_min_resolution = 1080
 target_aspect = "9:16"
 video_orientation = "vertical"
+search_concurrency = 4
+provider_concurrency = 2
+search_timeout_seconds = 90
+search_cache_ttl_seconds = 86400
 
 [generation]
 charts = true
@@ -120,3 +133,5 @@ base_url = "http://127.0.0.1:8765"
 # Sending candidate thumbnails to a vision-capable judge can improve visual accuracy,
 # but it usually consumes more tokens. Keep disabled unless you intentionally choose a vision model.
 vision = false
+concurrency = 2
+cache_ttl_seconds = 604800

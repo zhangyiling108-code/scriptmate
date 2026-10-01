@@ -11,6 +11,7 @@ from cmm.utils.retry import with_retry
 
 
 class CoverrProvider(BaseStockProvider):
+    media_types = frozenset({"video"})
     def __init__(self, api_key: str, matching: MatchingSettings, base_url: str = ""):
         self.api_key = api_key
         self.matching = matching
@@ -79,7 +80,7 @@ def _candidate_from_coverr_item(item, query: str, segment: Segment, matching: Ma
         duration=duration,
         width=width,
         height=height,
-        tags=[query] + tags,
+        tags=tags,
         quality_signals={
             "hd": (height or 0) >= 1080,
             "orientation": orientation,

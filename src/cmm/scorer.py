@@ -2,6 +2,11 @@
 
 import json
 import re
+import asyncio
+import base64
+import io
+import math
+from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 from cmm.cache import FileCache
@@ -9,36 +14,67 @@ from cmm.config import ModelSettings
 from cmm.fetcher.query_planner import candidate_bucket, visual_caption_for_candidate
 from cmm.models import MaterialCandidate, Segment
 from cmm.utils.http import build_async_client
+from cmm.utils.retry import with_retry
+from cmm.typesafe_judge import request_typesafe_scores
 
 
 class SemanticScorer:
-    def __init__(self, settings: ModelSettings, cache: FileCache, allow_fallback: bool = False, allow_vision: bool = False):
+    def __init__(self, settings: ModelSettings, cache: FileCache, allow_fallback: bool = False, allow_vision: bool = False, concurrency: int = 2, cache_ttl_seconds: float = 604800):
         self.settings = settings
         self.cache = cache
         self.allow_fallback = allow_fallback
         self.allow_vision = allow_vision
+        self._limit = asyncio.Semaphore(concurrency)
+        self.cache_ttl_seconds = cache_ttl_seconds
 
     async def score_candidates(self, segment: Segment, candidates: List[MaterialCandidate], batch_size: int = 4) -> List[MaterialCandidate]:
         if not candidates:
             return []
         if not self.settings.base_url or not self.settings.api_key:
             raise ValueError("Judge model requires base_url and api_key.")
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        if self.allow_vision and not self._supports_image_input():
+            raise ValueError("Vision judging requires a model configured with supports_vision = true.")
+
+        payloads = {}
+        pending = []
+        for candidate in candidates:
+            cached = self.cache.load_json("judge", self._cache_key(segment, [candidate]), max_age_seconds=self.cache_ttl_seconds)
+            if cached is None:
+                pending.append(candidate)
+            else:
+                payloads[candidate.id] = cached
+
+        async def score_batch(batch):
+            async with self._limit:
+                fallback = False
+                try:
+                    payload = await self._request_scores(segment, batch)
+                    by_id = {str(item.get("id")): item for item in payload}
+                    for candidate in batch:
+                        if candidate.id not in by_id:
+                            raise ValueError("Judge returned no score for candidate " + candidate.id)
+                        score = float(by_id[candidate.id]["score"])
+                        if not math.isfinite(score) or not 0 <= score <= 1:
+                            raise ValueError("Judge score must be finite and between 0 and 1")
+                except Exception:
+                    if not self.allow_fallback:
+                        raise
+                    fallback = True
+                    payload = self._heuristic_fallback_scores(segment, batch)
+                for item in payload:
+                    payloads[str(item["id"])] = item
+                if not fallback:
+                    for candidate in batch:
+                        self.cache.save_json("judge", self._cache_key(segment, [candidate]), payloads[candidate.id])
+
+        await asyncio.gather(*(score_batch(pending[offset:offset + batch_size]) for offset in range(0, len(pending), batch_size)))
 
         scored: List[MaterialCandidate] = []
         for offset in range(0, len(candidates), batch_size):
             batch = candidates[offset : offset + batch_size]
-            cache_key = self._cache_key(segment, batch)
-            cached = self.cache.load_json("judge", cache_key)
-            if cached is None:
-                try:
-                    payload = await self._request_scores(segment, batch)
-                except Exception:
-                    if not self.allow_fallback:
-                        raise
-                    payload = self._heuristic_fallback_scores(segment, batch)
-                self.cache.save_json("judge", cache_key, payload)
-            else:
-                payload = cached
+            payload = [payloads[candidate.id] for candidate in batch]
             score_map = {}
             number_map = {}
             ordered_items = []
@@ -73,6 +109,10 @@ class SemanticScorer:
                     base_reason=base_reason,
                     adjustment_note=adjustment_note,
                 )
+                if "judge_details" in item:
+                    candidate.quality_signals["judge_details"] = item["judge_details"]
+                else:
+                    candidate.quality_signals.pop("judge_details", None)
                 scored.append(candidate)
         return scored
 
@@ -453,6 +493,8 @@ class SemanticScorer:
         return set()
 
     async def _request_scores(self, segment: Segment, candidates: List[MaterialCandidate]) -> List[Dict[str, object]]:
+        if self.settings.provider.lower() == "typesafe":
+            return await request_typesafe_scores(self.settings, segment, candidates)
         headers = {"Authorization": "Bearer {0}".format(self.settings.api_key)}
         content = [
             {
@@ -465,6 +507,8 @@ class SemanticScorer:
                     "Penalize generic stock, isolated ingredient or object close-ups, and pretty visuals that require too much viewer inference. "
                     "For health, metabolism, mechanism, or cause-effect segments, prefer visuals that communicate relationship, body context, science context, or explanatory clarity over a single food or plant close-up. "
                     "Respect geography and narrative subject. The primary country or region should match the segment context, but if the segment explicitly compares or contrasts with another country or rival, that comparison geography is allowed and should not be penalized. "
+                    "Titles and tags are metadata, not visual observations. A search query is not evidence of what an asset depicts. "
+                    "When images are provided, describe visible evidence; a video thumbnail cannot establish the contents of the whole clip. "
                     "Preferred output format: {{\"scores\": [{{\"candidate_number\": 1, \"id\": \"...\", \"score\": 0.82, \"reason\": \"...\"}}]}}. "
                     "Segment scene_type: {0}; visual_type: {1}; text: {2}; narrative_subject: {3}; context: {4}".format(
                         segment.scene_type,
@@ -504,8 +548,10 @@ class SemanticScorer:
                     ),
                 }
             )
-            if self._supports_image_input() and (candidate.thumbnail_url or candidate.preview_uri):
-                content.append({"type": "image_url", "image_url": {"url": candidate.thumbnail_url or candidate.preview_uri}})
+            if self._supports_image_input():
+                image_url = await asyncio.to_thread(self._image_url, candidate)
+                if image_url:
+                    content.append({"type": "image_url", "image_url": {"url": image_url}})
         payload = {
             "model": self.settings.model,
             "messages": [
@@ -515,16 +561,19 @@ class SemanticScorer:
             "temperature": 0.1,
             "response_format": {"type": "json_object"},
         }
-        async with build_async_client(timeout=max(float(self.settings.timeout_seconds), 5.0)) as client:
-            response = await client.post(
-                "{0}/chat/completions".format(self.settings.base_url.rstrip("/")),
-                headers=headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            raw = response.json()["choices"][0]["message"]["content"]
+        async def request():
+            async with build_async_client(timeout=max(float(self.settings.timeout_seconds), 5.0)) as client:
+                response = await client.post(
+                    "{0}/chat/completions".format(self.settings.base_url.rstrip("/")), headers=headers, json=payload,
+                )
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"]
+
+        raw = await with_retry(request, retries=self.settings.max_retries)
         parsed = json.loads(self._extract_json(raw))
-        items = parsed.get("scores", parsed if isinstance(parsed, list) else [])
+        items = parsed.get("scores", []) if isinstance(parsed, dict) else parsed
+        if not isinstance(items, list):
+            raise ValueError("Judge scores must be a list")
         normalized = []
         for position, candidate in enumerate(candidates, start=1):
             item = next(
@@ -545,28 +594,63 @@ class SemanticScorer:
                     "reason": "Model returned no score for this candidate.",
                 }
             normalized.append(item)
+            if self._supports_image_input():
+                item["score_method"] = "vision_judge"
         return normalized
 
     def _supports_image_input(self) -> bool:
+        if self.settings.provider.lower() == "typesafe":
+            return False
         if not self.allow_vision:
             return False
+        if self.settings.supports_vision is not None:
+            return self.settings.supports_vision
         provider = str(self.settings.provider or "").lower()
         base_url = str(self.settings.base_url or "").lower()
         if provider == "deepseek" or "api.deepseek.com" in base_url:
             return False
         return True
 
+    @staticmethod
+    def _image_url(candidate):
+        value = candidate.thumbnail_url or candidate.preview_uri or (candidate.uri if candidate.media_type == "image" else "")
+        if not value:
+            return ""
+        if value.lower().split("?")[0].endswith((".mp4", ".mov", ".webm", ".m4v")):
+            return ""
+        if value.startswith(("https://", "http://")):
+            return value
+        from PIL import Image
+        with Image.open(Path(value)) as image:
+            image = image.convert("RGB")
+            image.thumbnail((1024, 1024))
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=85)
+        return "data:image/jpeg;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+
     def _cache_key(self, segment: Segment, batch: List[MaterialCandidate]) -> str:
         return json.dumps(
             {
-                "segment": segment.text,
+                "version": 4,
+                "segment": segment.model_dump(),
                 "model": self.settings.model,
                 "provider": self.settings.provider,
+                "base_url": self.settings.base_url,
+                "vision": self._supports_image_input(),
+                "fallback_allowed": self.allow_fallback,
                 "candidates": [
                     {
                         "id": candidate.id,
                         "thumb": candidate.thumbnail_url or candidate.preview_uri,
-                        "query": candidate.provider_meta.get("query", ""),
+                        "uri": candidate.uri,
+                        "title": candidate.provider_meta.get("title", ""),
+                        "description": candidate.provider_meta.get("description", ""),
+                        "tags": candidate.tags,
+                        "media_type": candidate.media_type,
+                        "dimensions": [candidate.width, candidate.height],
+                        "duration": candidate.duration,
+                        "source_page": candidate.source_page,
+                        "fingerprint": candidate.quality_signals.get("index_fingerprint", ""),
                     }
                     for candidate in batch
                 ],

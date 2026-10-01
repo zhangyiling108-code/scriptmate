@@ -50,6 +50,7 @@ def build_review_html(manifest: Dict, output_dir: str) -> str:
 </header>
 <main>
 __BODY__
+__WARNINGS__
 </main>
 <script type="application/json" id="scriptmate-manifest">__DATA_JSON__</script>
 </body>
@@ -59,6 +60,7 @@ __BODY__
         template.replace("__CREATED_AT__", _escape(str(manifest.get("created_at", ""))))
         .replace("__TOTAL_SEGMENTS__", _escape(str(manifest.get("total_segments", ""))))
         .replace("__BODY__", body)
+        .replace("__WARNINGS__", '<ul class="notes">' + "".join('<li>' + _escape(str(warning)) + '</li>' for warning in manifest.get("warnings", [])) + '</ul>')
         .replace("__DATA_JSON__", data_json)
     )
 
@@ -118,18 +120,29 @@ def _candidate_html(candidate: Dict, title: str, output_dir: str) -> str:
     notes_html = "".join("<li>{0}</li>".format(_escape(str(note))) for note in notes[:4])
     if notes_html:
         notes_html = '<ul class="notes">{0}</ul>'.format(notes_html)
+    judge = candidate.get("judge_details") or {}
+    judge_html = ""
+    if judge:
+        judge_html = '<dt>判断模型</dt><dd>{0}</dd><dt>模型置信度</dt><dd>{1} · 仅依据元数据，画面待核对</dd>'.format(
+            _escape(str(judge.get("model", ""))), _escape(_fmt(judge.get("confidence"))),
+        )
     return """<article class="candidate">
   <h3>{title}<span class="pill">{source}</span><span class="pill">{tag}</span></h3>
   {preview}
   <dl>
     <dt>分数</dt><dd>{score}</dd>
     <dt>评分方法</dt><dd>{method}</dd>
+    {judge_html}
     <dt>细项</dt><dd>{breakdown}</dd>
     <dt>规格</dt><dd>{resolution} / {orientation}</dd>
     <dt>质量</dt><dd>{quality} / 裁切 {crop}</dd>
     <dt>原因</dt><dd>{reason}</dd>
     <dt>文件/直链</dt><dd><a href="{file}" target="_blank" rel="noreferrer">{file}</a></dd>
     <dt>来源页</dt><dd>{source_page}</dd>
+    <dt>作者</dt><dd>{creator}</dd>
+    <dt>许可</dt><dd>{license_type} {license_version} · {license_url}</dd>
+    <dt>署名要求</dt><dd>{attribution_required}</dd>
+    <dt>署名文本</dt><dd>{attribution}</dd>
   </dl>
   {notes}
 </article>""".format(
@@ -139,6 +152,7 @@ def _candidate_html(candidate: Dict, title: str, output_dir: str) -> str:
         preview=preview,
         score=_escape(_fmt(candidate.get("score"))),
         method=_escape(str(candidate.get("score_method", ""))),
+        judge_html=judge_html,
         breakdown=_escape(_format_breakdown(candidate.get("score_breakdown") or {})),
         resolution=_escape(str(candidate.get("resolution", ""))),
         orientation=_escape(str(candidate.get("orientation", ""))),
@@ -147,6 +161,12 @@ def _candidate_html(candidate: Dict, title: str, output_dir: str) -> str:
         reason=_escape(str(candidate.get("reason", ""))),
         file=_escape(_href(candidate.get("file", ""), output_dir)),
         source_page=_link_or_text(candidate.get("source_page", ""), output_dir),
+        creator=_escape(str(candidate.get("creator", ""))),
+        license_type=_escape(str(candidate.get("license_type", "") or "unknown")),
+        license_version=_escape(str(candidate.get("license_version", ""))),
+        license_url=_link_or_text(candidate.get("license_url", ""), output_dir),
+        attribution_required="需要" if candidate.get("attribution_required") else "未要求／请核对许可",
+        attribution=_escape(str(candidate.get("attribution", ""))),
         notes=notes_html,
     )
 

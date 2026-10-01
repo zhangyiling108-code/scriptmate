@@ -77,7 +77,7 @@ class NasaImagesProvider(BaseStockProvider):
             attribution_required=True,
             width=width,
             height=height,
-            tags=[query] + tags,
+            tags=tags,
             quality_signals={
                 "hd": (height or 0) >= 1080,
                 "orientation": _orientation(width or 0, height or 0),

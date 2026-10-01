@@ -90,6 +90,7 @@ Key configuration sections:
 
 - `[planner_model]`: script analysis model, default `deepseek-v4-flash`
 - `[judge_model]`: candidate semantic scoring model, default `deepseek-v4-flash`
+  - TypeSafe JEV: use [config.typesafe.example.toml](config.typesafe.example.toml) with `TYPESAFE_API_KEY`; [setup and limitations](docs/open-media.md#typesafe-jev).
 - `[judge]`: optional judge behavior; `vision = true` sends thumbnails to a vision-capable judge and usually uses more tokens
 - `[sources]`: enabled providers such as `pexels`, `pixabay`, `coverr`, and `nasa`
 - `[[sources.extra]]`: domestic, paid, or future libraries declared for routing and extension
@@ -117,6 +118,7 @@ The matching logic emphasizes:
 - [Usage guide](docs/usage.md)
 - [Configuration guide](docs/config.md)
 - [Deployment guide](docs/deployment.md)
+- [Open media and vision judging](docs/open-media.md)
 
 ## V1 Scope
 
