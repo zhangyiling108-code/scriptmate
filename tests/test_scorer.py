@@ -1,7 +1,116 @@
-﻿from cmm.cache import FileCache
+﻿import asyncio
+import json
+
+import httpx
+import pytest
+
+from cmm.cache import FileCache
 from cmm.config import ModelSettings
 from cmm.models import MaterialCandidate, Segment
 from cmm.scorer import SemanticScorer
+
+
+def chat_judge(tmp_path):
+    return SemanticScorer(ModelSettings(provider="compatible", model="test", api_key="test-only", base_url="https://example.org/v1", max_retries=1), FileCache(str(tmp_path)))
+
+
+def chat_candidate(identifier):
+    return MaterialCandidate(id=identifier, source_type="commons", media_type="image", uri="https://example.org/" + identifier + ".jpg")
+
+
+def test_chat_judge_retries_only_missing_candidates(tmp_path, monkeypatch):
+    judge = chat_judge(tmp_path)
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        identifier = "asset-a" if len(requests) == 1 else "asset-b"
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({"scores": [{"id": identifier, "score": 0.72, "reason": "match"}]})}}]})
+
+    monkeypatch.setattr("cmm.scorer.build_async_client", lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    result = asyncio.run(judge.score_candidates(Segment(id=1, text="city"), [chat_candidate("asset-a"), chat_candidate("asset-b")]))
+    assert [candidate.id for candidate in result] == ["asset-a", "asset-b"]
+    assert len(requests) == 2
+    retry_content = json.dumps(requests[1]["messages"])
+    assert "asset-b" in retry_content
+    assert "asset-a" not in retry_content
+
+
+@pytest.mark.parametrize("allow_fallback", [False, True])
+def test_chat_judge_never_fabricates_or_caches_missing_scores(tmp_path, monkeypatch, allow_fallback):
+    judge = chat_judge(tmp_path)
+    judge.allow_fallback = allow_fallback
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"scores": []}'}}]})
+
+    monkeypatch.setattr("cmm.scorer.build_async_client", lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    segment = Segment(id=1, text="city")
+    candidate = chat_candidate("asset-a")
+    if allow_fallback:
+        result = asyncio.run(judge.score_candidates(segment, [candidate]))
+        assert result[0].quality_signals["score_method"] == "heuristic"
+    else:
+        with pytest.raises(ValueError, match="no score"):
+            asyncio.run(judge.score_candidates(segment, [candidate]))
+    assert len(calls) == 2
+    assert list((tmp_path / "judge").glob("*.json")) == []
+
+
+def test_chat_judge_normalizes_numbered_scores_to_candidate_ids(tmp_path, monkeypatch):
+    judge = chat_judge(tmp_path)
+    payload = {"scores": [{"id": "2", "score": 0.75}, {"candidate_number": 1, "score": 0.7}]}
+
+    def handler(request):
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(payload)}}]})
+
+    monkeypatch.setattr("cmm.scorer.build_async_client", lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    result = asyncio.run(judge.score_candidates(Segment(id=1, text="city"), [chat_candidate("asset-a"), chat_candidate("asset-b")]))
+    assert [candidate.id for candidate in result] == ["asset-a", "asset-b"]
+    assert [candidate.quality_signals["score_before_adjustments"] for candidate in result] == [0.7, 0.75]
+
+
+@pytest.mark.parametrize("retry_status", [200, 403])
+def test_chat_judge_preserves_valid_scores_when_only_missing_items_fall_back(tmp_path, monkeypatch, retry_status):
+    judge = chat_judge(tmp_path)
+    judge.allow_fallback = True
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            scores = [{"id": "asset-a", "score": 0.72, "reason": "model match"}]
+            return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({"scores": scores})}}]})
+        return httpx.Response(retry_status, json={"choices": [{"message": {"content": '{"scores": []}'}}]})
+
+    monkeypatch.setattr("cmm.scorer.build_async_client", lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    segment = Segment(id=1, text="city")
+    first, missing = chat_candidate("asset-a"), chat_candidate("asset-b")
+    result = asyncio.run(judge.score_candidates(segment, [first, missing]))
+    assert result[0].quality_signals["score_method"] == "llm_judge"
+    assert result[0].quality_signals["score_before_adjustments"] == 0.72
+    assert result[1].quality_signals["score_method"] == "heuristic"
+    assert judge.cache.has("judge", judge._cache_key(segment, [first]))
+    assert not judge.cache.has("judge", judge._cache_key(segment, [missing]))
+    assert len(calls) == 2
+
+
+def test_chat_judge_prefers_exact_ids_over_conflicting_position_numbers(tmp_path, monkeypatch):
+    judge = chat_judge(tmp_path)
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content))
+        score = 0.8 if len(calls) == 1 else 0.7
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps({"scores": [{"id": "1", "score": score}]})}}]})
+
+    monkeypatch.setattr("cmm.scorer.build_async_client", lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    result = asyncio.run(judge.score_candidates(Segment(id=1, text="city"), [chat_candidate("asset-a"), chat_candidate("1")]))
+    assert [candidate.quality_signals["score_before_adjustments"] for candidate in result] == [0.7, 0.8]
+    assert len(calls) == 2
+    assert "asset-a" in json.dumps(calls[1]["messages"])
 
 
 def test_heuristic_fallback_prefers_semantic_overlap_and_media_fit(tmp_path):

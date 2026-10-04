@@ -2,6 +2,19 @@
 from cmm.ranker.relevance import Ranker
 
 
+def test_ranker_diversity_never_selects_below_threshold_images():
+    segments = [Segment(id=i, text="city", visual_type="stock_video", scene_type="b_roll") for i in range(1, 4)]
+    materials = {
+        i: [MaterialCandidate(id="video:" + str(i), source_type="pexels", media_type="video", uri="https://example.org/" + str(i) + ".mp4", relevance_score=0.60, match_level="approx")]
+        for i in range(1, 4)
+    }
+    materials[3].append(MaterialCandidate(id="local:weak", source_type="local", media_type="image", uri="/library/city.jpg", relevance_score=0.54, match_level="exact"))
+    matched = Ranker().match(segments, materials, is_acceptable=lambda segment, candidate: candidate.relevance_score >= 0.55)
+    assert all(item.primary is not None and item.primary.relevance_score >= 0.55 for item in matched)
+    assert matched[2].primary.id == "video:3"
+    assert any(candidate.id == "local:weak" for candidate in matched[2].candidates)
+
+
 def test_ranker_does_not_let_resolution_overpower_relevance():
     ranker = Ranker()
     segment = Segment(id=1, text="植物会影响身体代谢。", visual_type="stock_image", scene_type="infographic")

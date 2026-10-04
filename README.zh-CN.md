@@ -90,8 +90,10 @@ city/shanghai.mp4,上海城市天际线,中国城市经济与现代化镜头,chi
 
 - `[planner_model]`：负责文案分段和搜索策略规划，默认 `deepseek-v4-flash`
 - `[judge_model]`：负责候选语义评分，默认 `deepseek-v4-flash`
-  - TypeSafe JEV：使用 [config.typesafe.example.toml](config.typesafe.example.toml) 与环境变量 `TYPESAFE_API_KEY`；参见[接入说明与限制](docs/open-media.md#typesafe-jev)。
+  - 视觉核验可用 `deepseek-flash`，明确设置 `supports_vision=true` 并启用 `[judge].vision`；未读取画面的候选不会标为可直接使用。
+- `[prefilter_model]`：可选的文本预筛模型。TypeSafe JEV 只按标题、描述和标签排序，最终画面分由视觉模型给出；使用 [config.typesafe.example.toml](config.typesafe.example.toml)，参见[接入说明与限制](docs/open-media.md#typesafe-jev)。
 - `[judge]`：可选评分行为；`vision = true` 会把缩略图发给支持视觉的 judge 模型，通常会消耗更多 token
+  - `require_visual_evidence=true`：仅实际读取图片的候选可自动选为主选。视频目前只核对封面，完整片段保留人工复核。
 - `[sources]`：当前内置自动搜索源，例如 `pexels`、`pixabay`、`coverr`、`nasa`
 - `[[sources.extra]]`：用于声明国内素材库、付费素材库或未来扩展源
 - `[library]`：可配置本地素材库根目录和 metadata 文件；也可通过 `--library-root`、`--library-meta` 临时覆盖
@@ -119,6 +121,7 @@ ScriptMate 更适合：
 
 ## 文档入口
 
+- [更新说明](CHANGELOG.md)
 - [英文说明](README.md)
 - [使用说明](docs/usage.md)
 - [配置说明](docs/config.md)

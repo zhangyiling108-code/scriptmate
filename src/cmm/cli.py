@@ -197,6 +197,20 @@ def _build_doctor_payload(settings: Settings, config_file: Optional[Path]) -> di
             "api_key_configured": bool(judge_key),
             "vision_enabled": settings.judge.vision,
             "supports_vision": settings.judge_model.supports_vision,
+            "role": "visual_judge" if settings.judge.vision else "metadata_judge",
+            "image_transport": settings.judge_model.image_transport,
+        },
+        "prefilter_model": {
+            "enabled": settings.prefilter_model is not None,
+            "provider": settings.prefilter_model.provider if settings.prefilter_model else "",
+            "model": settings.prefilter_model.model if settings.prefilter_model else "",
+            "api_key_configured": bool(settings.prefilter_model and settings.prefilter_model.api_key),
+            "role": "metadata_prefilter",
+            "candidate_limit": settings.judge.prefilter_limit,
+        },
+        "visual_review": {
+            "required_for_primary": settings.judge.require_visual_evidence or settings.judge_model.provider.lower() == "typesafe",
+            "video_scope": "thumbnail_only; manual clip review required",
         },
         "sources": {
             "enabled": settings.sources.enabled,

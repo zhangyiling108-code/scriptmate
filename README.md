@@ -90,8 +90,10 @@ Key configuration sections:
 
 - `[planner_model]`: script analysis model, default `deepseek-v4-flash`
 - `[judge_model]`: candidate semantic scoring model, default `deepseek-v4-flash`
-  - TypeSafe JEV: use [config.typesafe.example.toml](config.typesafe.example.toml) with `TYPESAFE_API_KEY`; [setup and limitations](docs/open-media.md#typesafe-jev).
+  - For image review, configure a vision-capable model such as `deepseek-flash` with `supports_vision=true` and `[judge].vision=true`.
+- `[prefilter_model]`: optional metadata prefilter. TypeSafe JEV ranks titles, descriptions and tags; the final visual score is independent. Use [config.typesafe.example.toml](config.typesafe.example.toml) with `TYPESAFE_API_KEY` and `DEEPSEEK_API_KEY`; [setup and limitations](docs/open-media.md#typesafe-jev).
 - `[judge]`: optional judge behavior; `vision = true` sends thumbnails to a vision-capable judge and usually uses more tokens
+  - `require_visual_evidence=true` restricts automatic primary selection to observed images. Video thumbnails require manual full-clip review.
 - `[sources]`: enabled providers such as `pexels`, `pixabay`, `coverr`, and `nasa`
 - `[[sources.extra]]`: domestic, paid, or future libraries declared for routing and extension
 - `[library]`: optional local material library root and metadata file; can also be overridden with `--library-root` and `--library-meta`
@@ -114,6 +116,7 @@ The matching logic emphasizes:
 
 ## Documentation
 
+- [Changelog (Chinese)](CHANGELOG.md)
 - [Chinese overview](README.zh-CN.md)
 - [Usage guide](docs/usage.md)
 - [Configuration guide](docs/config.md)

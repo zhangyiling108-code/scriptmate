@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +16,7 @@ class ModelSettings(BaseModel):
     max_retries: int = 1
     # None keeps compatibility with existing configs; explicitly set this for new endpoints.
     supports_vision: Optional[bool] = None
+    image_transport: Literal["url", "inline"] = "url"
 
     @model_validator(mode="before")
     @classmethod
@@ -133,6 +134,8 @@ class CapCutSettings(BaseModel):
 
 class JudgeSettings(BaseModel):
     vision: bool = False
+    require_visual_evidence: bool = False
+    prefilter_limit: int = Field(default=12, ge=3, le=100)
     concurrency: int = Field(default=2, ge=1, le=16)
     cache_ttl_seconds: float = Field(default=604800.0, ge=0)
 
@@ -153,6 +156,7 @@ class Settings(BaseSettings):
 
     planner_model: ModelSettings = ModelSettings()
     judge_model: ModelSettings = ModelSettings()
+    prefilter_model: Optional[ModelSettings] = None
     sources: SourcesSettings = SourcesSettings()
     matching: MatchingSettings = MatchingSettings()
     generation: GenerationSettings = GenerationSettings()
@@ -186,6 +190,7 @@ class Settings(BaseSettings):
                 },
             ),
             "judge_model": _load_judge_model(data.get("judge_model", legacy_llm)),
+            "prefilter_model": _load_prefilter_model(data.get("prefilter_model")),
             "sources": {
                 "enabled": data.get("sources", {}).get("enabled", ["pexels", "pixabay"]),
                 "pexels": _merge_env_overrides(
@@ -240,6 +245,7 @@ class Settings(BaseSettings):
                 data.get("judge", {}),
                 {
                     "vision": "SCRIPTMATE_JUDGE_VISION",
+                    "require_visual_evidence": "SCRIPTMATE_REQUIRE_VISUAL_EVIDENCE",
                 },
             ),
             "downgrade": _merge_env_overrides(
@@ -277,6 +283,25 @@ def _load_judge_model(payload):
         "timeout_seconds": "JUDGE_MODEL_TIMEOUT_SECONDS",
         "max_retries": "JUDGE_MODEL_MAX_RETRIES",
         "supports_vision": "JUDGE_MODEL_SUPPORTS_VISION",
+        "image_transport": "JUDGE_MODEL_IMAGE_TRANSPORT",
+    })
+
+
+def _load_prefilter_model(payload):
+    import os
+
+    if payload is None and not os.getenv("PREFILTER_MODEL_PROVIDER"):
+        return None
+    payload = payload or {}
+    provider = os.getenv("PREFILTER_MODEL_PROVIDER") or payload.get("provider", "typesafe")
+    typesafe = provider.lower() == "typesafe"
+    return _merge_env_overrides({"provider": provider, **payload}, {
+        "provider": "PREFILTER_MODEL_PROVIDER",
+        "model": ["PREFILTER_MODEL_NAME"] + (["TYPESAFE_DEFAULT_MODEL"] if typesafe else []),
+        "api_key": ["PREFILTER_MODEL_API_KEY"] + (["TYPESAFE_API_KEY"] if typesafe else []),
+        "base_url": ["PREFILTER_MODEL_BASE_URL"] + (["TYPESAFE_BASE_URL"] if typesafe else []),
+        "timeout_seconds": "PREFILTER_MODEL_TIMEOUT_SECONDS",
+        "max_retries": "PREFILTER_MODEL_MAX_RETRIES",
     })
 
 

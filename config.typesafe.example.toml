@@ -2,10 +2,18 @@
 # This file contains no credentials. Use --config config.typesafe.example.toml.
 [planner_model]
 provider = "deepseek"
-model = "deepseek-v4-flash"
+model = "deepseek-flash"
 base_url = "https://api.deepseek.com"
 
 [judge_model]
+provider = "deepseek"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+supports_vision = true
+image_transport = "inline"
+
+# JEV ranks metadata only; DeepSeek reads the shortlisted images.
+[prefilter_model]
 provider = "typesafe"
 model = "jev-latest"
 base_url = "https://api.typesafe.ai"
@@ -14,7 +22,9 @@ timeout_seconds = 30
 max_retries = 1
 
 [judge]
-vision = false
+vision = true
+require_visual_evidence = true
+prefilter_limit = 12
 concurrency = 2
 # jev-latest is a moving alias; set zero to refresh scores on every run.
 cache_ttl_seconds = 604800

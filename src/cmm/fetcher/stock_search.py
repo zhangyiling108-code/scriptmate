@@ -28,8 +28,9 @@ class StockSearchService:
         self.fallback_manager = fallback_manager
         self.cache = cache
         self.providers = build_providers(sources, matching)
-        self._search_limit = asyncio.Semaphore(matching.search_concurrency)
-        self._provider_limits = {name: asyncio.Semaphore(matching.provider_concurrency) for name in self.providers}
+        self._limits_loop = None
+        self._search_limit = None
+        self._provider_limits = {}
         self.warnings: List[str] = []
 
     async def search(self, segment: Segment) -> List[MaterialCandidate]:
@@ -60,6 +61,12 @@ class StockSearchService:
         return self.fallback_manager.generic_candidates(segment, top_k=top_k)
 
     async def _search_queries(self, queries: Iterable[str], segment: Segment, source: str = "all") -> List[MaterialCandidate]:
+        loop = asyncio.get_running_loop()
+        if self._limits_loop is not loop:
+            # Python 3.9 binds semaphores to the event loop at construction.
+            self._search_limit = asyncio.Semaphore(self.matching.search_concurrency)
+            self._provider_limits = {name: asyncio.Semaphore(self.matching.provider_concurrency) for name in self.providers}
+            self._limits_loop = loop
         tasks = []
         media_type = "image" if segment.visual_type == "stock_image" else "video"
         for name in self.sources.enabled:

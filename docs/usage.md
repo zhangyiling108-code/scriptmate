@@ -104,13 +104,13 @@ cp config.example.toml config.toml
 ```toml
 [planner_model]
 provider = "deepseek"
-model = "deepseek-v4-flash"
+model = "deepseek-flash"
 api_key = "你的 DeepSeek API Key"
 base_url = "https://api.deepseek.com"
 
 [judge_model]
 provider = "deepseek"
-model = "deepseek-v4-flash"
+model = "deepseek-flash"
 api_key = "你的 DeepSeek API Key"
 base_url = "https://api.deepseek.com"
 
@@ -156,7 +156,7 @@ vision = true
 .venv/bin/scriptmate match --file sample.txt -o ./output --aspect 9:16 --judge-vision
 ```
 
-注意：开启后会把候选素材缩略图发送给 judge 模型，通常会消耗更多 token。默认保持关闭，由你自行决定是否使用。
+注意：开启后会把候选素材缩略图发送给 judge 模型，通常会消耗更多 token。默认保持关闭。DeepSeek `deepseek-flash` 已完成真实图片请求验证；使用它核验时可设置 `supports_vision=true`、`image_transport="inline"`。如同时使用 JEV，将其配置到可选 `[prefilter_model]`，由 DeepSeek 给最终画面分；完整配置见 [开放素材与视觉评分](open-media.md#typesafe-jev) 和 [示例](../config.typesafe.example.toml)。设置 `[judge].require_visual_evidence=true` 后，只有实际读取图片的候选能自动入选；视频封面仍需人工核对片段。
 
 ### 3.2 声明额外付费素材库
 
@@ -190,10 +190,12 @@ notes = "Preferred for cinematic b-roll"
 
 推荐默认分工：
 
-- `planner_model = deepseek-v4-flash`
+- `planner_model = deepseek-flash`
   - 更适合脚本分段、视觉策略和搜索词规划
-- `judge_model = deepseek-v4-flash`
-  - 用于候选素材语义评分；如需视觉缩略图评分，可改成其他兼容的视觉模型
+- `judge_model = deepseek-flash`
+  - 开启视觉输入后核验候选图片，保留可见内容说明；视频封面评分不代表完整视频已核验
+- 可选 `prefilter_model = jev-latest`
+  - 只按文本元数据筛选有限候选，不覆盖最终画面评分
 
 ---
 
@@ -250,7 +252,7 @@ notes = "Preferred for cinematic b-roll"
 
 - `--file`：输入文案文件
 - `-o, --output`：输出目录
-- `--top`：每段保留多少个候选
+- `--top`：每段保留的候选总数，包含主选和备选，至少 3 条；例如 `--top 5` 在素材充足时返回 1 条主选和 4 条备选
 - `--aspect`：必填，素材画幅比例，会直接影响素材比例筛选
 - `--resolution`：素材最低分辨率要求，支持 `4K`、`1080`（默认）、`720`
 - `--style`：风格名，目前主要影响卡片风格
@@ -261,6 +263,8 @@ notes = "Preferred for cinematic b-roll"
 - `--allow-judge-fallback`：允许 judge 失败时退回启发式评分
 - `--allow-search-fallback`：允许真实搜索不足时使用 fallback 查询
 - `--allow-generated-fallback`：允许降级到生成型卡片或图表
+
+主选先满足质量门槛，再考虑本地优先和画面多样性。没有合格主选时仍保留候选链接供人工复核，候选数量不足时不为凑数自动降级。
 
 当前支持的常用画幅：
 

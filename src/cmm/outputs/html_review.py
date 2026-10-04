@@ -121,10 +121,18 @@ def _candidate_html(candidate: Dict, title: str, output_dir: str) -> str:
     if notes_html:
         notes_html = '<ul class="notes">{0}</ul>'.format(notes_html)
     judge = candidate.get("judge_details") or {}
+    metadata_judge = candidate.get("metadata_judge_details") or {}
+    scope = candidate.get("evidence_scope", "metadata")
+    scope_label = {"image": "已读取图片，模型辅助核验", "video_thumbnail": "只读取视频封面，完整片段待人工核对",
+                   "metadata": "仅依据标题与描述，画面待核对"}.get(scope, "画面待核对")
     judge_html = ""
     if judge:
-        judge_html = '<dt>判断模型</dt><dd>{0}</dd><dt>模型置信度</dt><dd>{1} · 仅依据元数据，画面待核对</dd>'.format(
+        judge_html = '<dt>判断模型</dt><dd>{0}</dd><dt>模型置信度</dt><dd>{1}</dd>'.format(
             _escape(str(judge.get("model", ""))), _escape(_fmt(judge.get("confidence"))),
+        )
+    if metadata_judge:
+        judge_html += '<dt>文本预筛模型</dt><dd>{0} · 元数据分 {1}，不作为最终画面分</dd>'.format(
+            _escape(str(metadata_judge.get("model", ""))), _escape(_fmt(candidate.get("metadata_score"))),
         )
     return """<article class="candidate">
   <h3>{title}<span class="pill">{source}</span><span class="pill">{tag}</span></h3>
@@ -132,6 +140,10 @@ def _candidate_html(candidate: Dict, title: str, output_dir: str) -> str:
   <dl>
     <dt>分数</dt><dd>{score}</dd>
     <dt>评分方法</dt><dd>{method}</dd>
+    <dt>核验范围</dt><dd>{scope}</dd>
+    <dt>画面分</dt><dd>{visual_score}</dd>
+    <dt>可见内容</dt><dd>{observation}</dd>
+    <dt>图片读取问题</dt><dd>{visual_error}</dd>
     {judge_html}
     <dt>细项</dt><dd>{breakdown}</dd>
     <dt>规格</dt><dd>{resolution} / {orientation}</dd>
@@ -152,6 +164,10 @@ def _candidate_html(candidate: Dict, title: str, output_dir: str) -> str:
         preview=preview,
         score=_escape(_fmt(candidate.get("score"))),
         method=_escape(str(candidate.get("score_method", ""))),
+        scope=_escape(scope_label),
+        visual_score=_escape(_fmt(candidate.get("visual_score"))),
+        observation=_escape(str(candidate.get("visual_observation", ""))),
+        visual_error=_escape(str(candidate.get("visual_input_error", ""))),
         judge_html=judge_html,
         breakdown=_escape(_format_breakdown(candidate.get("score_breakdown") or {})),
         resolution=_escape(str(candidate.get("resolution", ""))),

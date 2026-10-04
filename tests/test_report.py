@@ -94,20 +94,20 @@ def test_build_report_includes_distribution_and_timeline_overview():
     assert "## 复核队列" in report
     assert "## 节奏总览" in report
     assert "- 2. claim | data_card | economy_causal_card | explain_pause | prefer_explainer | data_card [economy/causal] | 0.88" in report
-    assert "- 3. example | stock_video | broll_video | motion_cutaway | usable | pixabay [City traffic] | 0.81" in report
+    assert "- 3. example | stock_video | broll_video | motion_cutaway | review | pixabay [City traffic] | 0.81" in report
     assert "推荐来源：data_card x1、pixabay x1" in report
     assert "资产类别：host_placeholder x1、economy_causal_card x1、broll_video x1" in report
-    assert "可用建议：host_only x1、prefer_explainer x1、usable x1" in report
+    assert "可用建议：host_only x1、prefer_explainer x1、review x1" in report
     assert "置信区间：manual x1、high x1、medium x1" in report
-    assert "复核优先级：none x1、low x1、medium x1" in report
+    assert "复核优先级：none x1、low x1、high x1" in report
     assert "质量标签：generated x1、ready_vertical x1" in report
     assert "generated.data_card.economy.causal/explainer_backup (0.72)" in report
     assert "pexels.video/source_backup (0.75)" in report
-    assert "- 3. [medium/medium] example -> pixabay.video | ready_vertical | 该段有明确可拍场景，优先匹配真实实景视频素材。" in report
+    assert "- 3. [high/medium] example -> pixabay.video | ready_vertical | 该段有明确可拍场景，优先匹配真实实景视频素材。" in report
     assert "- 2. [low/high] claim -> generated.data_card.economy.causal | generated | 该段属于抽象解释，优先生成 economy/causal 解释卡。" in report
     assert "- 建议：prefer_explainer" in report
     assert "- 置信：high / 复核优先级：low" in report
-    assert "- 置信：medium / 复核优先级：medium" in report
+    assert "- 置信：medium / 复核优先级：high" in report
     assert "- 直链：https://example.com/video.mp4" in report
     assert "  - 备选1链接：/tmp/alt-chart.png" in report
     assert "  - 备选2链接：https://example.com/alt.mp4" in report

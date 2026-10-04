@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import Dict, List, Optional
 import shutil
@@ -17,17 +18,20 @@ from cmm.library import LocalLibraryMatcher, default_index_path, scan_library
 from cmm.models import AnalysisResult, MatchInput, MatchResult, MatchSummary, MaterialCandidate, SearchResult, SegmentMatch
 from cmm.outputs import write_match_outputs
 from cmm.ranker import Ranker
-from cmm.scorer import SemanticScorer
+from cmm.scorer import PrefilteredScorer, SemanticScorer
 
 
 async def analyze_script(text: str, settings: Settings, cache: FileCache, aspect: str = "9:16") -> AnalysisResult:
     cache_key = _analysis_cache_key(text=text, aspect=aspect, settings=settings)
     cached = cache.load_json("analysis", cache_key)
     if cached is not None:
-        return AnalysisResult(**cached)
+        cached_result = AnalysisResult(**cached)
+        if not cached_result.overall_style.startswith("heuristic fallback"):
+            return cached_result
     analyzer = LLMAnalyzer(settings.planner_model, allow_fallback=settings.downgrade.planner_fallback)
     result = await analyzer.analyze(text, aspect)
-    cache.save_json("analysis", cache_key, result.model_dump())
+    if not result.overall_style.startswith("heuristic fallback"):
+        cache.save_json("analysis", cache_key, result.model_dump())
     return result
 
 
@@ -111,6 +115,12 @@ async def match_script(
         concurrency=settings.judge.concurrency,
         cache_ttl_seconds=settings.judge.cache_ttl_seconds,
     )
+    if settings.prefilter_model:
+        scorer = PrefilteredScorer(
+            SemanticScorer(settings.prefilter_model, cache, concurrency=settings.judge.concurrency,
+                           cache_ttl_seconds=settings.judge.cache_ttl_seconds),
+            scorer, limit=max(settings.judge.prefilter_limit, requested_results),
+        )
     chart_renderer = ChartRenderer(settings.cards, settings.generation)
     ranker = Ranker()
 
@@ -215,19 +225,23 @@ async def match_script(
 
         materials_by_segment[segment.id] = _without_text_cards(segment_candidates)
 
-    matched = ranker.match(analysis.segments, materials_by_segment)
+    matched = ranker.match(
+        analysis.segments,
+        materials_by_segment,
+        top_k=requested_results,
+        is_acceptable=lambda segment, candidate: _is_candidate_acceptable(segment, candidate, effective_matching, settings),
+    )
     segment_results: List[SegmentMatch] = []
     for item in matched:
         acceptable_primary = item.primary if _is_candidate_acceptable(item.segment, item.primary, effective_matching, settings) else None
-        if acceptable_primary is None and item.primary is not None:
+        if acceptable_primary is None and item.candidates:
             segment_notes[item.segment.id].append("已找到候选，但主选未达到当前质量门槛；保留链接供人工选择，默认不自动降级。")
+            if settings.judge.require_visual_evidence or settings.judge_model.provider.lower() == "typesafe":
+                segment_notes[item.segment.id].append("主选要求实际图片核验；仅元数据或视频封面评分的候选保留人工复核，不能证明完整片段动作。")
         chosen = acceptable_primary
         visible_candidates = _visible_candidates(item.candidates)
-        alternatives = (
-            visible_candidates[1: requested_results]
-            if chosen is not None and visible_candidates
-            else visible_candidates[:requested_results]
-        )
+        alternatives = [candidate for candidate in visible_candidates if chosen is None or candidate.id != chosen.id]
+        alternatives = alternatives[:requested_results - 1 if chosen is not None else requested_results]
         if match_input.save_candidates:
             dest_dir = output_dir / "segments" / _segment_dir(item.segment.id)
             dest_dir.mkdir(parents=True, exist_ok=True)
@@ -361,6 +375,9 @@ def _is_candidate_acceptable(segment, candidate: Optional[MaterialCandidate], ma
         return False
     if candidate.source_type == "data_card":
         return settings.downgrade.generated_fallback
+    if settings.judge.require_visual_evidence or settings.judge_model.provider.lower() == "typesafe":
+        if candidate.quality_signals.get("evidence_scope") != "image":
+            return False
     threshold = matching.min_score
     if segment.scene_type == "infographic":
         threshold = max(matching.strong_score, 0.82)
@@ -405,7 +422,19 @@ def _min_resolution_for_request(resolution: str, default: int) -> int:
 
 
 def _analysis_cache_key(text: str, aspect: str, settings: Settings) -> str:
-    return "{0}|{1}|{2}|{3}".format(text, aspect, settings.cards.theme, settings.planner_model.model)
+    return json.dumps(
+        {
+            "version": 2,
+            "text": text,
+            "aspect": aspect,
+            "theme": settings.cards.theme,
+            "provider": settings.planner_model.provider,
+            "base_url": settings.planner_model.base_url.rstrip("/"),
+            "model": settings.planner_model.model,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
 
 
 def _build_summary(segments: List[SegmentMatch]) -> MatchSummary:

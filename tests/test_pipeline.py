@@ -1,12 +1,101 @@
 ﻿import json
 from pathlib import Path
 
+import asyncio
+import pytest
+
+from cmm.cache import FileCache
 from cmm.config import ExternalSourceSettings, Settings
-from cmm.models import MatchInput, MaterialCandidate, Segment, SegmentMatch
-from cmm.pipeline import _action_for_segment, _build_summary, _is_candidate_acceptable, _matching_for_run, _without_text_cards, match_script
+from cmm.models import AnalysisResult, MatchInput, MaterialCandidate, Segment, SegmentMatch
+from cmm.pipeline import _action_for_segment, _analysis_cache_key, _build_summary, _is_candidate_acceptable, _matching_for_run, _without_text_cards, analyze_script, match_script
 
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+
+
+@pytest.mark.parametrize("scene_type,bad_score,good_score,has_primary", [
+    ("b_roll", 0.54, 0.60, True),
+    ("infographic", 0.81, 0.83, True),
+    ("b_roll", 0.40, 0.50, False),
+])
+def test_match_uses_eligible_primary_and_requested_shortlist(tmp_path, monkeypatch, scene_type, bad_score, good_score, has_primary):
+    settings = Settings()
+    segment = Segment(id=1, text="城市画面", visual_type="stock_image", scene_type=scene_type)
+    local = MaterialCandidate(id="local:weak", source_type="local", media_type="image", uri="/library/city.jpg", relevance_score=bad_score, match_level="exact")
+    remote = [MaterialCandidate(id="commons:" + str(i), source_type="commons", media_type="image", uri="https://example.org/" + str(i) + ".jpg", relevance_score=good_score, match_level="approx") for i in range(6)]
+
+    async def fake_analysis(*args, **kwargs):
+        return AnalysisResult(segments=[segment])
+
+    async def fake_search(*args, **kwargs):
+        return remote
+
+    async def fake_score(self, segment, candidates, **kwargs):
+        return candidates
+
+    monkeypatch.setattr("cmm.pipeline.analyze_script", fake_analysis)
+    monkeypatch.setattr("cmm.pipeline.LocalLibraryMatcher.match", lambda *args, **kwargs: [local])
+    monkeypatch.setattr("cmm.pipeline.StockSearchService.search", fake_search)
+    monkeypatch.setattr("cmm.pipeline.SemanticScorer.score_candidates", fake_score)
+    result = asyncio.run(match_script(MatchInput(text="城市画面", top_results=5, output_dir=str(tmp_path), save_candidates=False), settings, str(DATA_DIR)))
+    item = result.segments[0]
+    if has_primary:
+        assert item.chosen is not None
+        assert item.chosen.source_type == "commons"
+        assert len(item.alternatives) == 4
+        assert all(candidate.id != item.chosen.id for candidate in item.alternatives)
+    else:
+        assert item.chosen is None
+        assert item.action == "unmatched"
+        assert len(item.alternatives) == 5
+        assert any("质量门槛" in note for note in item.notes)
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert len(manifest["segments"][0]["alternatives"]) == (4 if has_primary else 5)
+
+
+@pytest.mark.parametrize("field,value", [("provider", "compatible"), ("base_url", "https://other.example/v1"), ("model", "other-model")])
+def test_analysis_cache_separates_model_routes(field, value):
+    first = Settings()
+    second = first.model_copy(deep=True)
+    setattr(second.planner_model, field, value)
+    assert _analysis_cache_key("script", "16:9", first) != _analysis_cache_key("script", "16:9", second)
+    assert "api_key" not in _analysis_cache_key("script", "16:9", first)
+
+
+def test_analysis_fallback_does_not_poison_later_model_results(tmp_path, monkeypatch):
+    settings = Settings()
+    settings.downgrade.planner_fallback = True
+    cache = FileCache(str(tmp_path))
+    calls = []
+
+    async def fake_analysis(self, text, aspect):
+        calls.append(self.allow_fallback)
+        if len(calls) == 1:
+            return AnalysisResult(segments=[], overall_style="heuristic fallback local")
+        return AnalysisResult(segments=[], overall_style="remote result")
+
+    monkeypatch.setattr("cmm.pipeline.LLMAnalyzer.analyze", fake_analysis)
+    first = asyncio.run(analyze_script("script", settings, cache))
+    assert first.overall_style.startswith("heuristic fallback")
+    assert not cache.has("analysis", _analysis_cache_key("script", "9:16", settings))
+    settings.downgrade.planner_fallback = False
+    second = asyncio.run(analyze_script("script", settings, cache))
+    third = asyncio.run(analyze_script("script", settings, cache))
+    assert second.overall_style == third.overall_style == "remote result"
+    assert calls == [True, False]
+
+
+def test_analysis_ignores_cached_fallback_when_fallback_is_disabled(tmp_path, monkeypatch):
+    settings = Settings()
+    cache = FileCache(str(tmp_path))
+    cache.save_json("analysis", _analysis_cache_key("script", "9:16", settings), AnalysisResult(segments=[], overall_style="heuristic fallback local").model_dump())
+
+    async def failing_analysis(*args, **kwargs):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr("cmm.pipeline.LLMAnalyzer.analyze", failing_analysis)
+    with pytest.raises(RuntimeError, match="model unavailable"):
+        asyncio.run(analyze_script("script", settings, cache))
 
 
 def test_match_script_writes_manifest_and_segment_outputs(tmp_path: Path, monkeypatch):
@@ -145,10 +234,10 @@ def test_match_script_writes_manifest_and_segment_outputs(tmp_path: Path, monkey
     assert manifest["segments"][0]["review_rank"] == 0
     assert manifest["segments"][1]["asset_class"] == "broll_video"
     assert manifest["segments"][1]["rhythm_tag"] == "motion_cutaway"
-    assert manifest["segments"][1]["use_status"] == "ready"
+    assert manifest["segments"][1]["use_status"] == "review"
     assert manifest["segments"][1]["confidence_band"] == "high"
-    assert manifest["segments"][1]["review_priority"] == "none"
-    assert manifest["segments"][1]["review_rank"] == 0
+    assert manifest["segments"][1]["review_priority"] == "high"
+    assert manifest["segments"][1]["review_rank"] == 3
     assert manifest["segments"][1]["chosen"]["source_label"] == "pexels.video"
     assert manifest["segments"][1]["external_search_links"][0]["name"] == "vjshi"
     assert "vjshi.com/search" in manifest["segments"][1]["external_search_links"][0]["url"]
@@ -160,10 +249,10 @@ def test_match_script_writes_manifest_and_segment_outputs(tmp_path: Path, monkey
     assert manifest["segments"][1]["chosen"]["crop_risk"] == "low"
     assert manifest["segments"][2]["asset_class"] == "explanatory_image"
     assert manifest["segments"][2]["rhythm_tag"] == "support_hold"
-    assert manifest["segments"][2]["use_status"] == "ready"
+    assert manifest["segments"][2]["use_status"] == "review"
     assert manifest["segments"][2]["confidence_band"] == "high"
-    assert manifest["segments"][2]["review_priority"] == "none"
-    assert manifest["segments"][2]["review_rank"] == 0
+    assert manifest["segments"][2]["review_priority"] == "high"
+    assert manifest["segments"][2]["review_rank"] == 3
     assert manifest["segments"][2]["chosen"]["source_label"] == "pexels.video"
     assert manifest["segments"][2]["edit_suggestion"].startswith("建议做轻微推拉")
     overview = (tmp_path / "output" / "segments_overview.csv").read_text(encoding="utf-8")

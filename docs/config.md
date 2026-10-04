@@ -9,13 +9,20 @@ ScriptMate CLI reads `config.toml` from the project root, or a custom file passe
   - Requires `provider`, `model`, `api_key`, `base_url`
 
 - `[judge_model]`
-  - Used for thumbnail-based semantic scoring
+  - Used for final candidate scoring; image input is opt-in
   - Requires `provider`, `model`, `api_key`, `base_url`
+  - `supports_vision=true` explicitly declares image support; `image_transport="inline"` reads and encodes previews instead of asking the model to fetch their URLs
+
+- `[prefilter_model]` (optional)
+  - Ranks metadata before final scoring; its score cannot override observed visual content
+  - TypeSafe JEV uses `provider="typesafe"`, `model="jev-latest"` and its own credentials
 
 - `[judge]`
   - `vision = false` by default
   - Set `vision = true` only when `judge_model` supports image input
   - Vision judging sends candidate thumbnails to the model and can improve visual accuracy, but it usually consumes more tokens
+  - `require_visual_evidence=true` permits only observed images to become automatic primaries; metadata and video covers remain for manual review
+  - `prefilter_limit=12` bounds each prefilter shortlist, while retaining at least the requested candidate count
 
 - `[sources.pexels]`
   - `api_key` for Pexels search
@@ -66,7 +73,8 @@ ScriptMate CLI reads `config.toml` from the project root, or a custom file passe
 - To enable a vision-capable judge, set `[judge].vision = true`, use `SCRIPTMATE_JUDGE_VISION=true`, or pass `--judge-vision` to `scriptmate match`. This is opt-in because thumbnail image input usually costs more tokens.
 - Built-in V1 search providers are `pexels`, `pixabay`, `coverr`, and `nasa`.
 - Additional image providers: `openverse` and `commons`. See [open media configuration](open-media.md) for licenses, credentials, vision capabilities, and concurrency settings.
-- TypeSafe JEV judging uses its native `/v1/systemone` score protocol, not chat completions. Use `config.typesafe.example.toml` and securely inject `TYPESAFE_API_KEY`. It evaluates metadata; vision mode is unsupported. See [JEV setup](open-media.md#typesafe-jev) for scores, confidence, and cache behavior.
+- TypeSafe JEV uses its native `/v1/systemone` score protocol for metadata prefiltering. Use `config.typesafe.example.toml` and securely inject `TYPESAFE_API_KEY` and `DEEPSEEK_API_KEY` for the two roles. JEV does not read images; DeepSeek `deepseek-flash` has been validated with image input. See [setup](open-media.md#typesafe-jev) for scores, confidence, and cache behavior.
+- `PREFILTER_MODEL_API_KEY` and `PREFILTER_MODEL_*` override the optional prefilter independently; its loader never borrows planner or final judge credentials.
 - `match` and `search` require `--aspect` so the material package does not mix incompatible ratios. Supported values: `9:16`, `16:9`, `4:3`, `3:4`, `1:1`.
 - `matching.search_pool_size` controls how many raw candidates each provider fetches before AI scoring and ranking. The shortlist can stay at 3 while the search pool is larger.
 - Use `[[sources.extra]]` to declare additional domestic or paid libraries you want to route or integrate later.

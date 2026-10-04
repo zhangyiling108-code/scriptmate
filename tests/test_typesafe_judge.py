@@ -188,7 +188,7 @@ def test_local_library_description_reaches_typesafe_state(tmp_path, monkeypatch)
     assert "local_match_score" in scored.quality_signals
 
 
-@pytest.mark.parametrize("raw_score,expected_chosen", [(3.2, False), (3.6, True)])
+@pytest.mark.parametrize("raw_score,expected_chosen", [(3.2, False), (3.6, False)])
 def test_full_match_pipeline_with_native_jev_and_commons(tmp_path, monkeypatch, raw_score, expected_chosen):
     from pathlib import Path
     calls = []

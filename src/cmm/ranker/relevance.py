@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from cmm.models import MatchedSegment, MaterialCandidate, Segment
 
 
 class Ranker:
-    def match(self, segments: List[Segment], materials_by_segment: Dict[int, List[MaterialCandidate]]) -> List[MatchedSegment]:
+    def match(
+        self,
+        segments: List[Segment],
+        materials_by_segment: Dict[int, List[MaterialCandidate]],
+        top_k: int = 3,
+        is_acceptable: Optional[Callable[[Segment, MaterialCandidate], bool]] = None,
+    ) -> List[MatchedSegment]:
+        if top_k < 1:
+            raise ValueError("top_k must be positive")
         results = []
         recent_primaries: List[MaterialCandidate] = []
         for segment in segments:
@@ -28,13 +36,14 @@ class Ranker:
                 key=self._sort_key,
                 reverse=True,
             )
-            primary = self._choose_primary(candidates, recent_primaries, segment)
-            shortlist = self._build_shortlist(candidates, limit=3, primary=primary)
+            eligible = candidates if is_acceptable is None else [candidate for candidate in candidates if is_acceptable(segment, candidate)]
+            primary = self._choose_primary(eligible, recent_primaries, segment)
+            shortlist = self._build_shortlist(candidates, limit=top_k, primary=primary)
             fallback_used = bool(primary and primary.match_level == "generic")
-            reason = "No candidate found."
+            reason = "No candidate meets the quality threshold." if candidates else "No candidate found."
             if primary:
                 reason = "Selected {0} candidate from {1}.".format(primary.match_level, primary.source_type)
-                if candidates and primary.id != candidates[0].id:
+                if eligible and primary.id != eligible[0].id:
                     reason += " Adjusted for visual diversity."
             results.append(
                 MatchedSegment(

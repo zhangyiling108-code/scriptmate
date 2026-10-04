@@ -278,6 +278,12 @@ def _score_detail_line(candidate) -> str:
     method = candidate.quality_signals.get("score_method") or candidate.provider_meta.get("score_method")
     if method:
         parts.append("method={0}".format(method))
+    parts.append("evidence={0}".format(candidate.quality_signals.get("evidence_scope", "metadata")))
+    if candidate.quality_signals.get("metadata_score") is not None:
+        parts.append("metadata_prefilter={0}".format(candidate.quality_signals["metadata_score"]))
+    observation = candidate.quality_signals.get("visual_observation")
+    if observation:
+        parts.append("visible={0}".format(observation))
     notes = candidate.quality_signals.get("score_notes", [])
     if notes:
         parts.append("notes={0}".format(" / ".join(str(note) for note in notes[:2])))

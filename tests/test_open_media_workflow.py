@@ -176,6 +176,61 @@ def test_search_timeout_is_reported(tmp_path):
     assert result.warnings == ["commons: search failed (request timed out)"]
 
 
+@pytest.mark.parametrize("global_limit,provider_limit", [(2, 3), (3, 2)])
+def test_search_limits_survive_separate_event_loops(tmp_path, global_limit, provider_limit):
+    asyncio.run(asyncio.sleep(0))
+    search = service(tmp_path, ["commons", "openverse"], search_concurrency=global_limit, provider_concurrency=provider_limit)
+    active = peak = 0
+    provider_active = {name: 0 for name in search.providers}
+    provider_peak = dict(provider_active)
+
+    async def fake(provider, query, segment):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        provider_active[provider] += 1
+        provider_peak[provider] = max(provider_peak[provider], provider_active[provider])
+        try:
+            await asyncio.sleep(0.001)
+            return [image_candidate(provider + query)]
+        finally:
+            active -= 1
+            provider_active[provider] -= 1
+
+    search._cached_provider_search = fake
+    for _ in range(2):
+        result = asyncio.run(search._search_queries(["city" + str(i) for i in range(6)], Segment(id=1, text="city", visual_type="stock_image")))
+        assert len(result) == 12
+        assert not search.warnings
+    assert peak == global_limit
+    assert all(value <= provider_limit for value in provider_peak.values())
+
+
+def test_judge_limit_survives_separate_event_loops(tmp_path, monkeypatch):
+    asyncio.run(asyncio.sleep(0))
+    judge = scorer(tmp_path, concurrency=2)
+    active = peak = calls = 0
+
+    async def fake(segment, candidates):
+        nonlocal active, peak, calls
+        active += 1
+        peak = max(peak, active)
+        calls += 1
+        try:
+            await asyncio.sleep(0.001)
+            return [{"id": candidate.id, "score": 0.72, "reason": "match"} for candidate in candidates]
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(judge, "_request_scores", fake)
+    for run in range(2):
+        candidates = [image_candidate(str(run) + "-" + str(i)) for i in range(5)]
+        result = asyncio.run(judge.score_candidates(Segment(id=1, text="city"), candidates, batch_size=1))
+        assert len(result) == 5
+    assert calls == 10
+    assert peak == 2
+
+
 def test_judge_cache_reuses_scores_when_candidate_batch_changes(tmp_path, monkeypatch):
     judge = scorer(tmp_path)
     calls = []
@@ -216,7 +271,7 @@ def test_vision_request_encodes_local_image(monkeypatch, tmp_path):
         content = payload["messages"][1]["content"]
         evidence = [part for part in content if part["type"] == "image_url"]
         assert evidence[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
-        return httpx.Response(200, json={"choices": [{"message": {"content": '{"scores":[{"id":"local","score":0.8,"reason":"Visible skyline"}]}'}}]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"scores":[{"id":"local","score":0.8,"reason":"Visible skyline","visible_evidence":"A dark blue field."}]}'}}]})
     mock_client(monkeypatch, "cmm.scorer", handler)
     candidate = MaterialCandidate(id="local", source_type="local", media_type="image", uri=str(image), thumbnail_url=str(image))
     result = asyncio.run(scorer(tmp_path, allow_vision=True).score_candidates(Segment(id=1, text="city"), [candidate]))

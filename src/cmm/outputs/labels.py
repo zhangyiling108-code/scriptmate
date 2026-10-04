@@ -148,6 +148,8 @@ def use_status(item: SegmentMatch) -> str:
         return "prefer_explainer"
     if chosen.source_type == "text_card":
         return "review"
+    if chosen.quality_signals.get("evidence_scope", "metadata") != "image":
+        return "review"
     if item.fallback_used or chosen.match_level == "generic":
         return "review"
     if chosen.relevance_score >= 0.85:
