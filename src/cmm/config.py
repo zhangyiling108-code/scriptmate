@@ -35,6 +35,17 @@ class ModelSettings(BaseModel):
         return self
 
 
+def model_supports_image_input(settings: ModelSettings) -> bool:
+    """Apply the same configured capability inference to scoring and diagnostics."""
+    if settings.provider.lower() == "typesafe":
+        return False
+    if settings.supports_vision is not None:
+        return settings.supports_vision
+    if settings.provider.lower() == "deepseek" or "api.deepseek.com" in settings.base_url.lower():
+        return settings.model == "deepseek-flash"
+    return True
+
+
 class SourceApiSettings(BaseModel):
     api_key: str = ""
     base_url: str = ""

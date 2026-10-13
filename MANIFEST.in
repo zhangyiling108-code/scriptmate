@@ -1,0 +1,5 @@
+include README.zh-CN.md
+include README.en.md
+include config.example.toml config.mcp.example.toml config.typesafe.example.toml
+include mcp-client.example.json
+include docs/mcp.md docs/config.md docs/open-media.md

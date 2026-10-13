@@ -13,7 +13,7 @@ runner = CliRunner()
 def test_version_works_without_a_subcommand():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "ScriptMate CLI 0.1.0" in result.stdout
+    assert "ScriptMate CLI 0.2.1" in result.stdout
 
 
 def _write_realish_config(tmp_path: Path) -> Path:

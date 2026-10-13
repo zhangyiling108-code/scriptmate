@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 import shutil
 from urllib.parse import quote_plus
 
@@ -61,6 +61,7 @@ async def match_script(
     data_dir: str,
     library_root: Optional[str] = None,
     library_meta: Optional[str] = None,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> MatchResult:
     requested_results = max(match_input.top_results, 3)
     output_dir = Path(match_input.output_dir)
@@ -134,7 +135,9 @@ async def match_script(
         warnings.append("Planner fallback used local heuristic analysis.")
     warnings.extend(library_warnings[:20])
 
-    for segment in analysis.segments:
+    for segment_index, segment in enumerate(analysis.segments):
+        if progress_callback:
+            progress_callback(segment_index, len(analysis.segments))
         segment_notes[segment.id] = []
         segment_fallbacks[segment.id] = False
         if segment.visual_type == "skip":
@@ -288,6 +291,8 @@ async def match_script(
             )
         )
 
+    if progress_callback:
+        progress_callback(len(analysis.segments), len(analysis.segments))
     result = MatchResult(
         script_file="",
         created_at=_now_iso(),

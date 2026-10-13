@@ -17,6 +17,7 @@ from cmm.library import default_index_path, scan_library
 from cmm.logging import configure_logging
 from cmm.models import MatchInput, model_dump_compat
 from cmm.pipeline import analyze_script, match_script, search_single_query
+from cmm.paths import data_directory
 
 
 app = typer.Typer(
@@ -25,6 +26,7 @@ app = typer.Typer(
         "默认策略：上下文优先、国家/叙事对象一致、每段至少 3 条真实候选、默认不降级、链接优先。"
     ),
     no_args_is_help=True,
+    pretty_exceptions_show_locals=False,
 )
 
 
@@ -427,7 +429,6 @@ def match(
     settings.downgrade.generated_fallback = allow_generated_fallback
     if judge_vision:
         settings.judge.vision = True
-    package_root = Path(__file__).resolve().parents[2]
     result = asyncio.run(
         match_script(
             MatchInput(
@@ -440,7 +441,7 @@ def match(
                 save_candidates=download,
             ),
             settings=settings,
-            data_dir=str(package_root / "data"),
+            data_dir=str(data_directory()),
             library_root=str(library_root) if library_root else settings.library.root or None,
             library_meta=str(library_meta) if library_meta else settings.library.metadata or None,
         )
@@ -501,13 +502,12 @@ def search(
     settings = Settings.from_file(str(config_file) if config_file else None)
     cache_root = settings.output.cache_dir or str((output_dir or Path.cwd()) / "cache")
     cache = FileCache(cache_root)
-    package_root = Path(__file__).resolve().parents[2]
     result = asyncio.run(
         search_single_query(
             query,
             settings,
             cache,
-            str(package_root / "data"),
+            str(data_directory()),
             source=source,
             top_k=top,
             aspect=aspect,
@@ -521,6 +521,11 @@ def search(
         (output_dir / "search.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
+
+from cmm.mcp_setup import check_mcp, setup_mcp
+
+app.command("setup-mcp")(setup_mcp)
+app.command("check-mcp")(check_mcp)
 
 if __name__ == "__main__":
     app()

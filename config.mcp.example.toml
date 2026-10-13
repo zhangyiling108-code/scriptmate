@@ -1,0 +1,55 @@
+# Each user supplies their own keys. No agent-specific configuration is required.
+[planner_model]
+provider = "deepseek"
+model = "deepseek-flash"
+api_key = ""
+base_url = "https://api.deepseek.com"
+timeout_seconds = 30
+max_retries = 1
+
+[judge_model]
+provider = "deepseek"
+model = "deepseek-flash"
+api_key = ""
+base_url = "https://api.deepseek.com"
+timeout_seconds = 30
+max_retries = 1
+
+[sources]
+# These sources do not require API keys. Add pexels/pixabay/coverr after configuring their keys.
+enabled = ["nasa", "commons"]
+
+[sources.pexels]
+api_key = ""
+
+[sources.pixabay]
+api_key = ""
+
+[sources.coverr]
+api_key = ""
+base_url = "https://api.coverr.co"
+
+[sources.commons]
+base_url = "https://commons.wikimedia.org/w/api.php"
+allowed_licenses = ["cc0", "pdm", "by"]
+
+[matching]
+top_results = 3
+search_pool_size = 8
+search_concurrency = 4
+provider_concurrency = 2
+
+[generation]
+charts = false
+ai_images = false
+
+[library]
+# Optional owned/licensed library. Relative paths are resolved against this config file.
+root = ""
+metadata = ""
+
+[judge]
+# Enable only with a vision-capable model and acceptance of additional API usage.
+vision = false
+require_visual_evidence = true
+concurrency = 2

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "copy-material-matcher"
-version = "0.1.0"
-description = "ScriptMate CLI for high-quality script-driven material matching."
+version = "0.2.1"
+description = "ScriptMate MCP and CLI for script-driven footage and image matching."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -16,9 +16,13 @@ dependencies = [
   "pydantic>=2.7,<3.0",
   "pydantic-settings>=2.2,<3.0",
   "typer>=0.12,<1.0",
+  "tomli>=2.0,<3.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
+mcp = [
+  "mcp==1.30.0",
+]
 dev = [
   "pytest>=8.0,<10.0",
 ]
@@ -29,12 +33,21 @@ render = [
 [project.scripts]
 cmm = "cmm.cli:app"
 scriptmate = "cmm.cli:app"
+scriptmate-mcp = "cmm.mcp_server:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.data-files]
+"share/scriptmate" = ["data/keyword_mapping.json", "data/demo_library_metadata.csv"]
+"share/scriptmate/card_templates" = ["data/card_templates/*.html"]
+"share/scriptmate/generic_footage/economy" = ["data/generic_footage/economy/*.mp4"]
+"share/scriptmate/generic_footage/health" = ["data/generic_footage/health/*.mp4"]
+"share/scriptmate/generic_footage/nature" = ["data/generic_footage/nature/*.mp4"]
+"share/scriptmate/generic_footage/technology" = ["data/generic_footage/technology/*.mp4"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

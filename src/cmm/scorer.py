@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 from cmm.cache import FileCache
-from cmm.config import ModelSettings
+from cmm.config import ModelSettings, model_supports_image_input
 from cmm.fetcher.query_planner import candidate_bucket, visual_caption_for_candidate
 from cmm.models import MaterialCandidate, Segment
 from cmm.utils.http import build_async_client
@@ -702,17 +702,7 @@ class SemanticScorer:
         return items
 
     def _supports_image_input(self) -> bool:
-        if self.settings.provider.lower() == "typesafe":
-            return False
-        if not self.allow_vision:
-            return False
-        if self.settings.supports_vision is not None:
-            return self.settings.supports_vision
-        provider = str(self.settings.provider or "").lower()
-        base_url = str(self.settings.base_url or "").lower()
-        if provider == "deepseek" or "api.deepseek.com" in base_url:
-            return self.settings.model == "deepseek-flash"
-        return True
+        return self.allow_vision and model_supports_image_input(self.settings)
 
     async def _prepare_image_url(self, candidate):
         value = await asyncio.to_thread(self._image_url, candidate)
