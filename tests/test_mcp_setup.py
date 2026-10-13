@@ -177,3 +177,13 @@ def test_setup_outputs_utf8_when_redirected_from_a_legacy_console(tmp_path):
                             env=environment, capture_output=True, encoding="utf-8", timeout=15)
     assert result.returncode == 0, result.stderr
     assert "配置向导" in result.stdout
+
+
+def test_help_outputs_utf8_before_eager_typer_processing():
+    import subprocess
+    import sys
+    environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"), PYTHONIOENCODING="cp1252")
+    result = subprocess.run([sys.executable, "-m", "cmm.cli", "--help"], env=environment,
+                            capture_output=True, encoding="utf-8", timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert "setup-mcp" in result.stdout

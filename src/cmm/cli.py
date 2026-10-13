@@ -239,15 +239,19 @@ def _build_doctor_payload(settings: Settings, config_file: Optional[Path]) -> di
     }
 
 
-@app.callback(invoke_without_command=True)
-def main(
-    version: bool = typer.Option(False, "--version", help="Show ScriptMate CLI version and exit."),
-):
+def _configure_output_encoding():
     # CLI reports and configuration guidance contain Chinese text; redirected
     # Windows streams can otherwise default to a code page that cannot encode it.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    version: bool = typer.Option(False, "--version", help="Show ScriptMate CLI version and exit."),
+):
+    _configure_output_encoding()
     if version:
         typer.echo("ScriptMate CLI {0}".format(__version__))
         raise typer.Exit()
@@ -533,5 +537,12 @@ from cmm.mcp_setup import check_mcp, setup_mcp
 app.command("setup-mcp")(setup_mcp)
 app.command("check-mcp")(check_mcp)
 
-if __name__ == "__main__":
+
+def run():
+    """Configure output before Typer processes eager --help and argument errors."""
+    _configure_output_encoding()
     app()
+
+
+if __name__ == "__main__":
+    run()

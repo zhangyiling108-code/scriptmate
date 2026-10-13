@@ -31,8 +31,8 @@ render = [
 ]
 
 [project.scripts]
-cmm = "cmm.cli:app"
-scriptmate = "cmm.cli:app"
+cmm = "cmm.cli:run"
+scriptmate = "cmm.cli:run"
 scriptmate-mcp = "cmm.mcp_server:main"
 
 [tool.setuptools]
