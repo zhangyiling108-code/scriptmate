@@ -19,7 +19,7 @@ def test_search_only_setup_creates_private_config_and_real_client_paths(tmp_path
     settings = Settings.from_file(str(target))
     assert settings.sources.enabled == ["nasa", "commons"]
     assert settings.planner_model.api_key == ""
-    exported = json.loads((target.parent / "mcp-client.json").read_text())
+    exported = json.loads((target.parent / "mcp-client.json").read_text(encoding="utf-8"))
     server = exported["mcpServers"]["scriptmate"]
     assert Path(server["command"]).is_absolute()
     assert server["args"][server["args"].index("--config") + 1] == str(target.absolute())
@@ -38,8 +38,8 @@ def test_setup_preserves_existing_config_and_client_edits(tmp_path):
     client.write_text('{"user":"custom config"}')
     result = runner.invoke(app, ["setup-mcp", "--config", str(target), "--non-interactive"])
     assert result.exit_code == 0, result.output
-    assert target.read_text() == original
-    assert client.read_text() == '{"user":"custom config"}'
+    assert target.read_text(encoding="utf-8") == original
+    assert client.read_text(encoding="utf-8") == '{"user":"custom config"}'
     assert len(list(tmp_path.glob("mcp-client*.json"))) == 2
 
 
@@ -49,8 +49,8 @@ def test_setup_does_not_copy_environment_secrets_into_files(tmp_path, monkeypatc
     target = tmp_path / "config.toml"
     result = runner.invoke(app, ["setup-mcp", "--config", str(target), "--non-interactive"])
     assert result.exit_code == 0, result.output
-    assert "synthetic-private-environment-key" not in target.read_text()
-    assert "synthetic-private-nested-key" not in target.read_text()
+    assert "synthetic-private-environment-key" not in target.read_text(encoding="utf-8")
+    assert "synthetic-private-nested-key" not in target.read_text(encoding="utf-8")
     assert "synthetic-private-environment-key" not in result.output
 
 
@@ -63,7 +63,7 @@ def test_reconfigure_keeps_a_private_backup(tmp_path):
     assert Settings.from_file(str(target)).sources.enabled == ["nasa", "commons"]
     backups = list(tmp_path.glob("config.toml.*.bak"))
     assert len(backups) == 1
-    assert backups[0].read_text() == original
+    assert backups[0].read_text(encoding="utf-8") == original
     if os.name != "nt":
         assert backups[0].stat().st_mode & 0o777 == 0o600
 
@@ -81,7 +81,7 @@ def test_interactive_setup_masks_credentials_and_enables_requested_vision(tmp_pa
     assert settings.judge_model.supports_vision is True
     assert settings.judge.require_visual_evidence is True
     assert "synthetic-private-model-key" not in result.output
-    assert "synthetic-private-model-key" not in (tmp_path / "mcp-client.json").read_text()
+    assert "synthetic-private-model-key" not in (tmp_path / "mcp-client.json").read_text(encoding="utf-8")
 
 
 def test_readiness_explains_missing_keys_and_visual_review():
@@ -162,8 +162,18 @@ def test_invalid_environment_cannot_expose_a_secret_in_setup(tmp_path, monkeypat
     target = tmp_path / "config.toml"
     environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
     result = subprocess.run([sys.executable, "-m", "cmm.cli", "setup-mcp", "--config", str(target), "--non-interactive"],
-                            env=environment, capture_output=True, text=True, timeout=15)
+                            env=environment, capture_output=True, text=True, encoding="utf-8", timeout=15)
     assert result.returncode == 0
     assert "fakekey" not in result.stdout + result.stderr
     if target.exists():
-        assert "fakekey" not in target.read_text()
+        assert "fakekey" not in target.read_text(encoding="utf-8")
+
+
+def test_setup_outputs_utf8_when_redirected_from_a_legacy_console(tmp_path):
+    import subprocess
+    import sys
+    environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"), PYTHONIOENCODING="cp1252")
+    result = subprocess.run([sys.executable, "-m", "cmm.cli", "setup-mcp", "--config", str(tmp_path / "config.toml"), "--non-interactive"],
+                            env=environment, capture_output=True, encoding="utf-8", timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert "配置向导" in result.stdout

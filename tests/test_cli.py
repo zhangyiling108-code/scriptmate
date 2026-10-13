@@ -2,6 +2,7 @@
 
 from PIL import Image
 from typer.testing import CliRunner
+from click import unstyle
 
 from cmm.cli import app
 from cmm.models import AnalysisResult, MatchResult, MatchSummary, SearchResult, Segment
@@ -112,8 +113,8 @@ def test_material_search_commands_require_aspect(tmp_path: Path):
 
     assert result_match.exit_code != 0
     assert result_search.exit_code != 0
-    assert "--aspect" in result_match.output
-    assert "--aspect" in result_search.output
+    assert "--aspect" in unstyle(result_match.output)
+    assert "--aspect" in unstyle(result_search.output)
 
 
 def test_library_index_command_writes_index(tmp_path: Path):

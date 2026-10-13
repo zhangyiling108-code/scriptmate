@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import platform
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -242,6 +243,11 @@ def _build_doctor_payload(settings: Settings, config_file: Optional[Path]) -> di
 def main(
     version: bool = typer.Option(False, "--version", help="Show ScriptMate CLI version and exit."),
 ):
+    # CLI reports and configuration guidance contain Chinese text; redirected
+    # Windows streams can otherwise default to a code page that cannot encode it.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     if version:
         typer.echo("ScriptMate CLI {0}".format(__version__))
         raise typer.Exit()
